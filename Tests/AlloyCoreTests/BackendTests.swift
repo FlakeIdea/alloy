@@ -237,6 +237,45 @@ import Testing
         #expect(warning.contains { $0.title == "MetalFX upscaling is not active" })
     }
 
+    /// Low input delay is on by default, but only on a DXMT whose d3d11 reads dxgi.maxFrameLatency.
+    @Test func lowInputDelayNeedsTheEngineOption() throws {
+        let dir = TempDir()
+        var game = makeGame(in: dir)
+        let prefix = makeInitializedPrefix(in: dir)
+        let lib = "Wine Devel.app/Contents/Resources/wine/lib/wine/"
+        dir.write(lib + "x86_64-windows/winemetal.dll", Data())
+        dir.write(lib + "x86_64-unix/winemetal.so", Data())
+        let at120 = LaunchOptions(displayRefreshRate: 120)
+        game.graphics.backend = .dxmt
+        #expect(game.graphics.lowInputDelay)
+
+        // An engine without the option (DXMT 0.80 as released) gets nothing.
+        dir.write(lib + "x86_64-windows/d3d11.dll", Data("MZ....d3d11.metalSpatialUpscaleFactor....".utf8))
+        var runtime = makeFakeRuntime(in: dir, moltenVK: true, d3dMetal: true)
+        #expect(!runtime.hasFrameLatencyOption && backend.capabilities(of: runtime).lowInputDelay.isEmpty)
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"]
+                == "d3d11.preferredMaxFrameRate=120")
+
+        dir.write(lib + "x86_64-windows/d3d11.dll", Data("MZ....dxgi.maxFrameLatency....".utf8))
+        runtime = makeFakeRuntime(in: dir, moltenVK: true, d3dMetal: true)
+        #expect(runtime.hasFrameLatencyOption && backend.capabilities(of: runtime).lowInputDelay == [.dxmt])
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"]
+                == "d3d11.preferredMaxFrameRate=120;dxgi.maxFrameLatency=1")
+        game.graphics.lowInputDelay = false
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"]
+                == "d3d11.preferredMaxFrameRate=120")
+        // Other graphics paths never get it.
+        game.graphics.lowInputDelay = true
+        game.graphics.backend = .d3dMetal
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"] == nil)
+
+        // Games saved before the setting existed get it; turning it off is kept.
+        let decode = { (json: String) in try JSONDecoder().decode(GraphicsConfiguration.self, from: Data(json.utf8)) }
+        #expect(try decode(#"{"backend":"dxmt"}"#).lowInputDelay)
+        var g = GraphicsConfiguration(); g.lowInputDelay = false
+        #expect(try !JSONDecoder().decode(GraphicsConfiguration.self, from: JSONEncoder().encode(g)).lowInputDelay)
+    }
+
     /// Settings saved before the cap existed keep their DXVK limit; the rest get the display maximum.
     @Test func olderFrameLimitSettingsCarryOver() throws {
         let decode = { (json: String) in try JSONDecoder().decode(GraphicsConfiguration.self, from: Data(json.utf8)) }

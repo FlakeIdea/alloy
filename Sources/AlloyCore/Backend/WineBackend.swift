@@ -102,6 +102,9 @@ public struct WineBackend: CompatibilityBackend {
         // The web helper fix matches Steam's executable by name, so kernelbase holds it as a wide string.
         let kernelbase = (try? Data(contentsOf: win.appendingPathComponent("kernelbase.dll"), options: .alwaysMapped)) ?? Data()
         let hasWebHelperFix = kernelbase.range(of: Data("steamwebhelper.exe".utf16.flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] })) != nil
+        // The frame-latency option is read from DXMT's own d3d11 (about 4 MB), not assumed from the engine's version.
+        let hasLatency = hasDXMT && ((try? Data(contentsOf: win.appendingPathComponent("d3d11.dll"), options: .alwaysMapped))?
+            .range(of: Data(LowInputDelay.configKey.utf8)) != nil)
         // bcrypt names libgnutls only when Wine was configured with it.
         let bcrypt = (try? Data(contentsOf: wineLib.appendingPathComponent("x86_64-unix/bcrypt.so"), options: .alwaysMapped)) ?? Data()
         return WineRuntime(kind: kind, wineBinary: binary, root: root, version: versionProbe(binary),
@@ -114,7 +117,8 @@ public struct WineBackend: CompatibilityBackend {
                            hasGStreamer: fileManager.fileExists(atPath: wineLib.appendingPathComponent("x86_64-unix/winegstreamer.so").path)
                                && fileManager.fileExists(atPath: VideoPlayback.pluginFolder(root: root).path),
                            // The bundle's Info.plist is written by ntdll, so the games category is in its strings.
-                           hasGameModeBundles: ntdll.range(of: Data("public.app-category.games".utf8)) != nil)
+                           hasGameModeBundles: ntdll.range(of: Data("public.app-category.games".utf8)) != nil,
+                           hasFrameLatencyOption: hasLatency)
     }
 
     static func kind(forAppName name: String) -> RuntimeKind {
@@ -203,7 +207,8 @@ public struct WineBackend: CompatibilityBackend {
         return BackendCapabilities(graphics: graphics, syncModes: sync, supportsMetalHUD: true,
                                    supportsAVXAdvertisement: runtime.requiresRosetta, notes: notes,
                                    metalFXUpscaling: upscaling, metalFXFrameGeneration: frameGeneration,
-                                   metalFXSpatialUpscaling: runtime.hasDXMT ? [.dxmt] : [])
+                                   metalFXSpatialUpscaling: runtime.hasDXMT ? [.dxmt] : [],
+                                   lowInputDelay: runtime.hasDXMT && runtime.hasFrameLatencyOption ? [.dxmt] : [])
     }
 
     // MARK: Commands
@@ -323,6 +328,9 @@ public struct WineBackend: CompatibilityBackend {
             env["DXMT_METALFX_SPATIAL_SWAPCHAIN"] = "1"
             dxmtConfig.append("d3d11.metalSpatialUpscaleFactor=\(MetalFXSpatialUpscaling.configValue(factor))")
         }
+        if g.lowInputDelay && caps.lowInputDelay.contains(g.backend) {
+            dxmtConfig.append("\(LowInputDelay.configKey)=\(LowInputDelay.frames)")
+        }
         if !dxmtConfig.isEmpty { env["DXMT_CONFIG"] = dxmtConfig.joined(separator: ";") }
         if runtime.hasGStreamer { env.merge(VideoPlayback.environment(for: runtime)) { _, new in new } }
         // Shown from the start when the game asks for it; otherwise loaded for the shortcut and hidden as it appears.
@@ -373,4 +381,14 @@ public struct WineBackend: CompatibilityBackend {
 public enum FNA {
     public static let driverKey = "FNA3D_FORCE_DRIVER"
     public static let driver = "D3D11"
+}
+
+/// Low input delay: the game may queue only one frame ahead of the GPU instead of three (DXMT's default), so what the
+/// player does reaches the screen up to two frames sooner. Measured with Alloy's frame-latency test on DXMT: GPU-heavy
+/// frames finished 55 ms after the game sent them instead of 113 ms, at the same frame rate.
+public enum LowInputDelay {
+    public static let configKey = "dxgi.maxFrameLatency"
+    /// The fewest frames DXMT can queue: each frame waits for the previous one to finish on the GPU.
+    public static let frames = 1
+    public static let help = "Lets the game queue only one frame ahead of the graphics card instead of three, so your clicks and keys reach the screen up to two frames sooner. Best for competitive games. Turn it off if a game's frame rate drops or stutters with it."
 }

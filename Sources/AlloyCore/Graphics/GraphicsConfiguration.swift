@@ -145,6 +145,8 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
     public var dlss: Bool
     /// MetalFX spatial upscaling factor (DXMT), or nil for off.
     public var metalFXSpatialFactor: Double?
+    /// Queue one frame ahead of the GPU instead of three (DXMT, see `LowInputDelay`). On unless turned off.
+    public var lowInputDelay: Bool
 
     public init(backend: GraphicsBackendKind = .wined3dOpenGL,
                 preset: QualityPreset = .balanced,
@@ -156,7 +158,8 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
                 shaderCachePath: String? = nil,
                 forceDX11: Bool = false,
                 dlss: Bool = false,
-                metalFXSpatialFactor: Double? = nil) {
+                metalFXSpatialFactor: Double? = nil,
+                lowInputDelay: Bool = true) {
         self.backend = backend
         self.preset = preset
         self.targetFPS = targetFPS
@@ -168,6 +171,7 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
         self.forceDX11 = forceDX11
         self.dlss = dlss
         self.metalFXSpatialFactor = metalFXSpatialFactor
+        self.lowInputDelay = lowInputDelay
     }
 
     public init(from decoder: Decoder) throws {
@@ -192,6 +196,7 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
         forceDX11 = try c.decodeIfPresent(Bool.self, forKey: .forceDX11) ?? false
         dlss = try c.decodeIfPresent(Bool.self, forKey: .dlss) ?? false
         metalFXSpatialFactor = try c.decodeIfPresent(Double.self, forKey: .metalFXSpatialFactor)
+        lowInputDelay = try c.decodeIfPresent(Bool.self, forKey: .lowInputDelay) ?? d.lowInputDelay
     }
 
     private enum LegacyKeys: String, CodingKey { case dxvkFrameRateLimit }
@@ -224,6 +229,8 @@ public struct BackendCapabilities: Equatable, Sendable {
     public var metalFXFrameGeneration: Set<GraphicsBackendKind> = []
     /// Graphics paths that can upscale any game's frames with MetalFX (DXMT's MetalFX swapchain).
     public var metalFXSpatialUpscaling: Set<GraphicsBackendKind> = []
+    /// Graphics paths that can limit the game to one queued frame (`LowInputDelay`).
+    public var lowInputDelay: Set<GraphicsBackendKind> = []
 
     public func status(of backend: GraphicsBackendKind) -> CapabilityStatus {
         graphics[backend] ?? .unavailable("Not supported by this runtime.")

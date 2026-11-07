@@ -108,6 +108,9 @@ public struct WineRuntime: Codable, Identifiable, Hashable, Sendable {
     /// ntdll starts each Windows program from a small app bundle in the games category (patches/wine/0003), so macOS
     /// turns on Game Mode for it in fullscreen, whoever starts it: Alloy, Steam or a game's own launcher.
     public var hasGameModeBundles: Bool
+    /// DXMT reads `dxgi.maxFrameLatency` (patches/dxmt), so Alloy can limit how many frames are queued ahead of the
+    /// GPU, which is most of the input delay players feel.
+    public var hasFrameLatencyOption: Bool
     /// Name shown for Alloy-managed runtimes (from their manifest).
     public var customName: String?
 
@@ -116,7 +119,7 @@ public struct WineRuntime: Codable, Identifiable, Hashable, Sendable {
                 hasDXMT: Bool = false, hasMSync: Bool = false, hasESync: Bool = false,
                 hasNVNGX: Bool = false, hasFrameInterpolation: Bool = false,
                 hasSteamWebHelperFix: Bool = false, hasGnuTLS: Bool = false, hasGStreamer: Bool = false,
-                hasGameModeBundles: Bool = false) {
+                hasGameModeBundles: Bool = false, hasFrameLatencyOption: Bool = false) {
         self.kind = kind
         self.wineBinary = wineBinary
         self.root = root
@@ -133,6 +136,7 @@ public struct WineRuntime: Codable, Identifiable, Hashable, Sendable {
         self.hasGnuTLS = hasGnuTLS
         self.hasGStreamer = hasGStreamer
         self.hasGameModeBundles = hasGameModeBundles
+        self.hasFrameLatencyOption = hasFrameLatencyOption
     }
 
     public var displayName: String {

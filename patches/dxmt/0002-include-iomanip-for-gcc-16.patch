@@ -1,0 +1,12 @@
+diff --git a/src/util/com/com_guid.cpp b/src/util/com/com_guid.cpp
+index 11bf4a7..623f349 100644
+--- a/src/util/com/com_guid.cpp
++++ b/src/util/com/com_guid.cpp
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include <mutex>
++#include <iomanip>
+ #include <unordered_set>
+ 
+ #include "com_guid.hpp"

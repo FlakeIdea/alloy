@@ -384,6 +384,21 @@ against 10.8 s for the default. Terraria itself has not been tested.
 
 ## Input delay (Brawlhalla, reported)
 
-Not reproduced; Brawlhalla hasn't been tested. DXMT 0.80 lets a game queue up to three frames (`max_latency_ = 3`)
-with no setting to lower it, which at 60 FPS can add up to about 50 ms. A lower limit needs a DXMT change in a new
-engine build.
+Brawlhalla itself hasn't been tested. DXMT 0.80 lets a game queue up to three frames ahead of the GPU
+(`max_latency_ = 3`), which is most of the delay between a click and the screen. Engine package -4 adds a
+`dxgi.maxFrameLatency` option to DXMT (`patches/dxmt`), and each game's "Low input delay" setting (on by default)
+sets it to 1, the fewest DXMT can queue. Games can't raise it again with `SetMaximumFrameLatency`.
+
+Measured with a D3D11 test in Alloy on that engine, at 120 Hz with the display frame cap, timing when each frame's
+GPU work finished after the game sent it: 33.0 → 16.6 ms at 120 fps, and 103.7 → 51.8 ms for GPU-heavy frames at
+38.6 fps, with the same frame rate either way. Turn the setting off for a game whose frame rate drops with it.
+Older engines don't have the option, so the setting isn't shown for them.
+
+## Steam's window frame rate
+
+Windows programs see the display's refresh rate: on a 120 Hz ProMotion display, display settings, DWM timing and
+DXGI modes report 120 Hz and `DwmFlush` paces at 120 per second. Steam's window is Chromium, which the engine starts
+with `--in-process-gpu --disable-gpu` (`patches/wine/0001`), so it draws on the CPU. Chromium's frame meter showed
+86 to 96 FPS with dropped frames on the store page, so scrolling can feel uneven. Drawing on the GPU was tried in
+engine builds: through Direct3D 11 (DXMT) the web helper crashed, through OpenGL it stopped responding, and through
+Vulkan (MoltenVK) Steam's frame drew but its pages stayed black and at 1× scale. Steam keeps the CPU path for now.
