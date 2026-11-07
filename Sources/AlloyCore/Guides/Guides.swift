@@ -189,7 +189,7 @@ public enum GraphicsGuide {
             GuideSection("eye", "Still slow? Lower the resolution and choose Sharp", [
                 "The biggest gain comes from a lower resolution. In the game, choose about half your screen's resolution (for example 1512 × 982 on a 14-inch MacBook Pro), then choose **Sharp** in Alloy. Apple's MetalFX scales the picture back up to your full Retina resolution, so it stays crisp instead of blurry.",
                 speed + " Sharp on its own, at full resolution, costs about 2 milliseconds per frame, so use it together with a lower resolution.",
-                "If the game offers DLSS, you can try that instead: Alloy passes it to Apple's MetalFX. Don't use DLSS and Sharp together.",
+                "If the game offers DLSS, you can try that instead: with **MetalFX scaling** on (\(sixtyHertz ? "the default in Balanced" : "the default in Balanced and Battery Saver")), Alloy passes DLSS to Apple's MetalFX. Choosing Sharp turns MetalFX scaling off, so the picture is never upscaled twice.",
             ]),
             GuideSection("wrench.and.screwdriver", "If the game won't start or looks wrong", [
                 "First check the game page: Alloy lists problems it found, often with a one-click fix such as installing a missing Windows component.",

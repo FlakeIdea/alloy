@@ -330,3 +330,36 @@ after the patch the cursor stayed hidden at all four edges, under the menu bar, 
 switching to another app and back; it showed only while another app was in front, as it should. With the patch it
 was hidden in 60 of 60 screenshots taken while the pointer moved (no flicker). None of these reproduced the reported
 case; after the patch the user reported the arrow no longer appears in the Unreal Engine game where they saw it.
+
+## Looking around stuck left or right (2026-11-07)
+
+Reported: in a game, turning the view left or right sometimes stopped while up and down still worked, as if the mouse
+were stuck at the edge of the screen. Wine's Mac driver confines the cursor for ClipCursor with a window's mouse
+confinement rect, which macOS limits to the window, so the cursor is held to the part of the game's rect inside the
+window. To decide whether the cursor is pinned (and send the mouse's own motion instead of a position), Wine tested the
+rect the game asked for. Games often clip to their whole monitor or to a rect a little larger than their window, so at
+the window's edge the next position was still "inside", and Wine sent absolute moves to the same spot: no movement
+that way. `patches/wine/0007` tests the region the cursor is really held in, read back from the window, and counts a
+cursor within a point of its edge as pinned. Shipped in engine package `dxmt-0.80-cx26.3-3` (package -2 with only
+`winemac.so` rebuilt).
+
+Not yet tested in a game: the cause was found by reading the driver's code, and the fix builds and loads. Check it in
+the game where it happened: windowed or borderless, turn left or right until the view would have stopped.
+
+## Metrics shortcut showing nothing (2026-11-07)
+
+Metal's HUD appears as it loads, so Alloy used to hide it in each process by posting the HUD's toggle notification.
+That notification reaches every process with the HUD, so a second process (a launcher, then the game) flipped the
+first one back, and the shortcut could then show metrics in one window while hiding them in another. libMTLHud reads
+`MTL_HUD_HIDDEN=1` to load hidden (tested with a Metal test window: hidden at start, shown after one toggle), so every
+process now starts hidden and the shortcut toggles them all together.
+
+## Steam games and their settings (2026-11-07)
+
+Started by an already-open Steam, a game inherited the environment Steam was opened with: a game set to Balanced ran
+with Sharp's MetalFX 2× because Steam had been opened for another game that used Sharp (seen in the logs: the second
+game's processes logged into the first game's session). Alloy 1.0 Beta starts Steam games itself when Steam is open,
+and when it isn't, opens Steam quietly (`-silent`), waits for "Logged On" in Steam's `logs/connection_log.txt` and then
+starts the game itself. Game Mode needs the game frontmost and fullscreen; a game started by Alloy is started from the
+app the player just clicked. Not yet confirmed in `gamepolicyd`'s log for a Steam game.
+

@@ -376,6 +376,44 @@ final class AppModel: ObservableObject {
 
     func refreshPrefixes() { prefixes = prefixManager.allPrefixes }
 
+    // MARK: Engine updates
+
+    /// The newer game engine this environment can move to, if one is installed.
+    func engineUpdate(for prefix: WinePrefix) -> WineRuntime? {
+        guard !prefix.isReadOnly, let current = runtimes.first(where: { $0.id == prefix.runtimeID }) else { return nil }
+        return EngineUpdate.newer(than: current, among: runtimes, managedDirectory: runtimesDirectory)
+    }
+
+    /// Something is running in this environment (a game, Steam, an installer).
+    func isRunning(in prefix: WinePrefix) -> Bool {
+        sessions.values.contains { session in
+            session.state.isRunning && session.command.environment["WINEPREFIX"].map {
+                URL(fileURLWithPath: $0).standardizedFileURL == prefix.path.standardizedFileURL
+            } == true
+        }
+    }
+
+    /// Moves the environment, and every game in it, onto the newest game engine. Only which engine runs it changes:
+    /// its files, saves and installed games stay as they are.
+    func moveToNewestEngine(_ prefix: WinePrefix) {
+        guard let newest = engineUpdate(for: prefix) else { return }
+        guard !isRunning(in: prefix) else {
+            alert = AlertItem(title: "Close what's running in \(prefix.name) first",
+                              message: "Quit the games and store apps running in this environment, then update its game engine.")
+            return
+        }
+        let old = prefix.runtimeID
+        var p = prefix
+        p.runtimeID = newest.id
+        do { try prefixManager.update(p) } catch { report(error, title: "Could not update \(prefix.name)"); return }
+        refreshPrefixes()
+        for game in games where game.prefixID == prefix.id && game.runtimeID != nil && game.runtimeID == old {
+            var g = game
+            g.runtimeID = nil
+            save(g)
+        }
+    }
+
     func createPrefix(name: String, runtime: WineRuntime?) -> WinePrefix? {
         do {
             let p = try prefixManager.createPrefix(name: name, runtimeID: runtime?.id)
@@ -509,6 +547,13 @@ final class AppModel: ObservableObject {
 
     var installedPackages: [String: RuntimeInstaller.Marker] { RuntimeInstaller.installedMarkers(in: runtimesDirectory) }
 
+    /// A newer game engine to download, when one is already installed (Setup offers the first one in the list).
+    var engineDownloadUpdate: RuntimePackage? {
+        guard engineProgress == nil, hasGameEngine, let package = manifest?.runtimes.first,
+              installedPackages[package.id] == nil else { return nil }
+        return package
+    }
+
     /// Reads the list of downloadable game engines from the address this release was built with.
     func loadManifest() {
         guard let url = settings.componentsURL else {
@@ -610,6 +655,13 @@ final class AppModel: ObservableObject {
     func setPlayMode(_ mode: PlayMode, for game: Game) {
         var g = game
         mode.apply(to: &g.graphics)
+        save(g)
+    }
+
+    /// MetalFX scaling: games that support DLSS get Apple MetalFX upscaling instead (DLSS → MetalFX).
+    func setMetalFXScaling(_ on: Bool, for game: Game) {
+        var g = game
+        g.graphics.dlss = on
         save(g)
     }
 
@@ -1017,6 +1069,14 @@ final class AppModel: ObservableObject {
                               message: AlloyError.prefixReadOnly(name: prefix.name).errorDescription ?? "")
             return
         }
+        // A Steam game always starts from Alloy, never from Steam: started by Steam, it got the settings Steam was opened
+        // with, Alloy lost track of it, and macOS could leave it in the background without Game Mode. When Steam isn't
+        // open yet, Alloy opens it quietly first and starts the game once Steam has signed in.
+        if extraArguments.isEmpty, !preparing.contains(game.id), !steamFallback.contains(game.id), !steamIsOpen(in: prefix),
+           directSteamGame(game, prefix: prefix) != nil, let steam = steamEntry(in: prefix) {
+            openSteamThenStart(game, steam: steam, prefix: prefix)
+            return
+        }
         do {
             // With Steam already open, steam.exe would only pass the request on: the game would get Steam's settings
             // instead of its own, and Alloy would lose track of it. The game's own program is started instead.
@@ -1049,6 +1109,45 @@ final class AppModel: ObservableObject {
             report(error, title: "Cannot launch \(game.name)")
         }
     }
+
+    /// The library entry for the Steam app itself in this environment.
+    func steamEntry(in prefix: WinePrefix) -> Game? {
+        games.first { $0.prefixID == prefix.id && GameStore.store(for: $0) == .steam && !StoreLibraryScanner.startsAGame($0) }
+    }
+
+    /// Opens Steam in the background, waits up to 90 seconds for it to sign in, then starts the game itself. If Steam
+    /// doesn't open or sign in, the game is started the old way, through steam.exe.
+    private func openSteamThenStart(_ game: Game, steam: Game, prefix: WinePrefix) {
+        let since = Date()
+        let log = StoreInstaller.executable(of: .steam, in: prefix)?.deletingLastPathComponent()
+            .appendingPathComponent("logs/connection_log.txt")
+        preparing.insert(game.id)
+        requestLaunch(steam, extraArguments: ["-silent"])
+        Task { @MainActor [weak self] in
+            for second in 1...90 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self else { return }
+                let open = self.steamIsOpen(in: prefix)
+                // Steam didn't start (and isn't waiting for the user to confirm it).
+                if !open && self.pendingLaunch == nil && second >= 10 { break }
+                if open, let log, let text = try? String(contentsOf: log, encoding: .utf8),
+                   SteamDirectLaunch.signedIn(connectionLog: text, since: since) {
+                    // Signed in; a moment more for Steam to answer games asking for it.
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    break
+                }
+            }
+            guard let self else { return }
+            self.preparing.remove(game.id)
+            // Steam open: the game starts directly. Not open: through steam.exe, without trying to open Steam again.
+            self.steamFallback.insert(game.id)
+            self.requestLaunch(game)
+            self.steamFallback.remove(game.id)
+        }
+    }
+
+    /// Games being started through steam.exe after Steam didn't open or sign in for Alloy.
+    private var steamFallback: Set<UUID> = []
 
     /// Steam is running in this environment, started by Alloy (for the store entry or a game it started).
     func steamIsOpen(in prefix: WinePrefix) -> Bool {
@@ -1140,10 +1239,7 @@ final class AppModel: ObservableObject {
     private func beginSession(_ game: Game, command: LaunchCommand) {
         appliedFix[game.id] = nil
         do {
-            // The HUD was loaded only for the shortcut, so it is hidden in each process as it appears.
-            let hider = command.environment["MTL_HUD_ENABLED"] == "1" && !game.graphics.metalHUD ? MetricsHUD.Hider() : nil
-            let session = try launcher.launch(gameID: game.id, gameName: game.name, command: command,
-                                              onLine: hider.map { hider in { hider.observe($0) } })
+            let session = try launcher.launch(gameID: game.id, gameName: game.name, command: command)
             FreezeCapture.watch(session)
             let backendKind = game.graphics.backend
             let store = GameStore.store(for: game)

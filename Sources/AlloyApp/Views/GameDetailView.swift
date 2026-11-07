@@ -19,6 +19,14 @@ struct GameDetailView: View {
                     UpgradeBanner(game: game, choice: upgrade)
                 }
                 GettingReadyBanner(game: game, state: state)
+                if let prefix = model.prefix(game.prefixID), let newest = model.engineUpdate(for: prefix) {
+                    EngineUpdateBanner(prefix: prefix, newest: newest)
+                } else if let package = model.engineDownloadUpdate {
+                    EngineDownloadBanner(package: package)
+                } else if let progress = model.engineProgress {
+                    ProgressView(value: progress.fraction) { Text(progress.status).font(.callout) }
+                        .padding(16).glassCard()
+                }
                 if let conditions = model.macConditions {
                     HStack(alignment: .top, spacing: 12) {
                         Icon(.alert).font(.title3).foregroundStyle(Theme.warning).frame(width: 26)
@@ -326,6 +334,7 @@ struct ProblemsCard: View {
 struct GraphicsCard: View {
     @EnvironmentObject var model: AppModel
     let game: Game
+    @State private var confirmSharp = false
 
     /// The modes for this game and display, plus the game's current mode if this display would not offer it (Battery
     /// Saver chosen on a faster display), so the page still shows what is set.
@@ -344,8 +353,17 @@ struct GraphicsCard: View {
                 if !game.isApp {
                 HStack(spacing: 12) {
                     ForEach(modes) { mode in
-                        ModeTile(mode: mode, selected: current == mode) { model.setPlayMode(mode, for: game) }
+                        ModeTile(mode: mode, selected: current == mode) {
+                            // Sharp upscales every frame, which can make a game at a high resolution lag: asked first.
+                            if mode == .sharp && current != .sharp { confirmSharp = true } else { model.setPlayMode(mode, for: game) }
+                        }
                     }
+                }
+                .alert("Use Sharp for \(game.name)?", isPresented: $confirmSharp) {
+                    Button("Use Sharp") { model.setPlayMode(.sharp, for: game) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(sharpWarning(caps))
                 }
                 HStack(alignment: .firstTextBaseline) {
                     Text(current?.summary(displayRefreshRate: DisplayInfo.refreshRate())
@@ -356,6 +374,23 @@ struct GraphicsCard: View {
                         .buttonStyle(.flat).foregroundStyle(Theme.accentAlt).font(.callout)
                 }
                 Divider()
+                // The store app itself (Steam's own window) has no game to upscale.
+                if caps.metalFXUpscaling.contains(game.graphics.backend),
+                   GameStore.store(for: game) == nil || StoreLibraryScanner.startsAGame(game) {
+                    let sharp = current == .sharp
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("MetalFX scaling")
+                            Text(metalFXScalingNote(sharp: sharp)).font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Toggle("MetalFX scaling", isOn: Binding(get: { game.graphics.dlss && !sharp },
+                                                                set: { model.setMetalFXScaling($0, for: game) }))
+                            .toggleStyle(.switch).labelsHidden().disabled(sharp)
+                    }
+                    Divider()
+                }
                 }
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -397,6 +432,71 @@ struct GraphicsCard: View {
                 Text("Install the game engine from Setup to choose graphics settings.").foregroundStyle(Theme.warning)
             }
         }
+    }
+}
+
+/// A newer game engine is installed than the one this game's environment runs on.
+struct EngineUpdateBanner: View {
+    @EnvironmentObject var model: AppModel
+    let prefix: WinePrefix
+    let newest: WineRuntime
+
+    var body: some View {
+        let others = model.games.filter { $0.prefixID == prefix.id }.count - 1
+        HStack(alignment: .top, spacing: 12) {
+            Icon("arrow.down.circle").font(.title3).foregroundStyle(Theme.accent).frame(width: 26)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("A newer game engine is installed").font(.headline)
+                Text("The \(prefix.name) environment still runs on an older one. Updating it brings the engine's latest fixes\(others > 0 ? " to the \(others) other game\(others == 1 ? "" : "s") in it too" : ""). Games, saves and settings stay as they are.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Update Environment") { model.moveToNewestEngine(prefix) }
+                .buttonStyle(GhostCapsule())
+        }
+        .padding(16).glassCard()
+    }
+}
+
+/// A newer game engine can be downloaded.
+struct EngineDownloadBanner: View {
+    @EnvironmentObject var model: AppModel
+    let package: RuntimePackage
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Icon("arrow.down.circle").font(.title3).foregroundStyle(Theme.accent).frame(width: 26)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Game engine update available").font(.headline)
+                Text("\(package.name), with the latest fixes. \(RuntimeInstaller.megabytes(package.downloadBytes)) download. After it installs, Alloy offers to move this game's environment onto it.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Install Update") { model.installEngine(package) }
+                .buttonStyle(GhostCapsule())
+        }
+        .padding(16).glassCard()
+    }
+}
+
+extension GraphicsCard {
+    func sharpWarning(_ caps: BackendCapabilities) -> String {
+        var parts = ["Sharp uses Apple MetalFX to upscale every frame to your display's full Retina resolution."]
+        if game.graphics.dlss && caps.metalFXUpscaling.contains(game.graphics.backend) {
+            parts.append("It turns off MetalFX scaling, so the picture isn't upscaled twice.")
+        }
+        parts.append("If you set a high resolution in the game, upscaling it as well can make the game lag.")
+        parts.append("Use Sharp only when the game doesn't run well at a high resolution and you want it to look sharper: choose a lower resolution in the game, and Sharp scales it up.")
+        return parts.joined(separator: " ")
+    }
+
+    func metalFXScalingNote(sharp: Bool) -> String {
+        if sharp { return "Off while Sharp is on: Sharp already upscales every frame with MetalFX." }
+        var note = "Games that support NVIDIA DLSS use Apple MetalFX upscaling instead: turn on DLSS in the game's graphics settings. Turn this off if the game looks scaled or blurry."
+        if let traits = model.traits[game.id], GameStore.store(for: game) == nil, !traits.dlss.contains(.upscaling) {
+            note += " No DLSS files were found in this game's folder, so it may make no difference here."
+        }
+        return note
     }
 }
 

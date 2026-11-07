@@ -132,7 +132,8 @@ import Testing
         #expect(choice.backend == .dxmt && choice.forceDX11 && choice.dlss)
         let plain = GraphicsDefaults.choose(traits: GameTraits(usage: [.d3d11], machine: .x64), runtimes: [dxmt],
                                             preferredRuntime: nil, backend: backend)
-        #expect(plain.backend == .dxmt && !plain.forceDX11 && !plain.dlss)
+        // MetalFX scaling is on by default wherever the path has it, DLSS files or not.
+        #expect(plain.backend == .dxmt && !plain.forceDX11 && plain.dlss)
     }
 
     @Test func findsFidelityFXAsGameRunFrameGeneration() {

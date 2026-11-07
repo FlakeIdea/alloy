@@ -227,4 +227,25 @@ public enum SteamDirectLaunch {
         if started { out.append(current) }
         return out
     }
+
+    /// Whether Steam has signed in since `since`, from its `logs/connection_log.txt`. Each state change is a line such
+    /// as `[2026-11-07 19:45:47] [Logged On, 4, 7] [U:1:…] …`, stamped in local time; the latest one counts.
+    public static func signedIn(connectionLog: String, since: Date, timeZone: TimeZone = .current) -> Bool {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.timeZone = timeZone
+        format.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        var state: String?
+        for line in connectionLog.split(whereSeparator: \.isNewline) {
+            // "[<date>] [<state>, …]": the second bracket holds a state only when a comma follows its first word(s).
+            guard line.hasPrefix("["), let close = line.firstIndex(of: "]"),
+                  let date = format.date(from: String(line[line.index(after: line.startIndex)..<close])),
+                  date >= since.addingTimeInterval(-1) else { continue }
+            let rest = line[line.index(after: close)...].drop { $0 == " " }
+            guard rest.hasPrefix("["), let comma = rest.firstIndex(of: ","), let end = rest.firstIndex(of: "]"), comma < end
+            else { continue }
+            state = String(rest[rest.index(after: rest.startIndex)..<comma])
+        }
+        return state == "Logged On"
+    }
 }

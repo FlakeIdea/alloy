@@ -98,6 +98,28 @@ struct SteamAppInfoTests {
         #expect(SteamDirectLaunch.splitArguments("") == [])
     }
 
+    /// Lines as Steam writes them; only a sign-in after Alloy opened Steam counts, and the latest state wins.
+    @Test func readsSteamSignInFromItsConnectionLog() {
+        let utc = TimeZone(identifier: "UTC")!
+        let log = """
+        [2026-11-07 19:40:00] [Logged On, 4, 7] [U:1:1] RecvMsgClientLogOnResponse() : processing complete
+        [2026-11-07 19:45:46] [Connected, 4, 7] [U:1:1] Logging on [U:1:1]
+        [2026-11-07 19:45:47] [Logging On, 4, 7] [U:1:1] RecvMsgClientLogOnResponse() : [U:1:1] 'OK'
+        [2026-11-07 19:45:47] [Logged On, 4, 7] [U:1:1] RecvMsgClientLogOnResponse() : processing complete
+        [2026-11-07 19:45:47] CClientJobGetClientUpdateHosts: cached version not expired
+        """
+        func at(_ time: String) -> Date {
+            let f = DateFormatter(); f.timeZone = utc; f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f.date(from: time)!
+        }
+        #expect(SteamDirectLaunch.signedIn(connectionLog: log, since: at("2026-11-07 19:45:40"), timeZone: utc))
+        // The earlier sign-in, before Steam was opened this time, doesn't count.
+        let starting = log.components(separatedBy: "\n").prefix(2).joined(separator: "\n")
+        #expect(!SteamDirectLaunch.signedIn(connectionLog: starting, since: at("2026-11-07 19:45:40"), timeZone: utc))
+        #expect(!SteamDirectLaunch.signedIn(connectionLog: log, since: at("2026-11-07 19:50:00"), timeZone: utc))
+        #expect(!SteamDirectLaunch.signedIn(connectionLog: log + "\n[2026-11-07 19:46:00] [Logged Off, 4, 7] [U:1:1] Log off",
+                                            since: at("2026-11-07 19:45:40"), timeZone: utc))
+    }
+
     @Test func startsTheGameProgramInsideItsFolder() throws {
         let steam = FileManager.default.temporaryDirectory.appendingPathComponent("steam-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: steam) }

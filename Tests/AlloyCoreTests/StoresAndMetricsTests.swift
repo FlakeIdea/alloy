@@ -118,25 +118,6 @@ import Testing
 }
 
 @Suite struct MetricsTests {
-    @Test func findsTheProcessTheHUDLoadedInto() {
-        #expect(MetricsHUD.loadingProcess(in: "2026-11-01 21:44:10.686 SpaceGame-Win64-Shipping.exe[1931:26964] [libMTLHud] Metric com.apple.hud-stat.fps already exist") == 1931)
-        #expect(MetricsHUD.loadingProcess(in: "[   3.42s] 2026-11-01 21:43:45.242 GameLauncher-Win64-Shipping.exe[1862:25555] [libMTLHud] Metric x") == 1862)
-        #expect(MetricsHUD.loadingProcess(in: "0128:err:ole:com_get_class_object class not registered") == nil)
-        #expect(MetricsHUD.loadingProcess(in: "[libMTLHud] no process") == nil)
-    }
-
-    /// Each process is hidden once, however many lines the HUD prints there.
-    @Test func hidesEachProcessOnce() async throws {
-        final class Counter: @unchecked Sendable { let lock = NSLock(); var n = 0 }
-        let counter = Counter()
-        let hider = MetricsHUD.Hider { counter.lock.withLock { counter.n += 1 } }
-        func line(_ text: String) -> LogLine { LogLine(id: 0, date: Date(), stream: .stderr, text: text) }
-        for pid in [100, 100, 100, 200] { hider.observe(line("game.exe[\(pid):1] [libMTLHud] Metric a already exist")) }
-        hider.observe(line("game.exe[300:1] something else"))
-        try await Task.sleep(nanoseconds: 600_000_000)
-        #expect(counter.lock.withLock { counter.n } == 2)
-    }
-
     @Test func loadsTheHUDForTheShortcutOrWhenShownAtStart() throws {
         let dir = TempDir()
         let backend = WineBackend(applicationDirectories: [], installRoots: [], versionProbe: { _ in nil })
@@ -146,6 +127,11 @@ import Testing
         #expect(plain.environment["MTL_HUD_ENABLED"] == nil)
         let shortcut = try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: LaunchOptions(loadMetricsHUD: true))
         #expect(shortcut.environment["MTL_HUD_ENABLED"] == "1")
+        // Loaded only for the shortcut, it starts hidden in every process, so one press shows it in all of them.
+        #expect(shortcut.environment["MTL_HUD_HIDDEN"] == "1")
+        var shown = game; shown.graphics.metalHUD = true
+        let atStart = try backend.launchCommand(for: shown, prefix: prefix, runtime: runtime, options: LaunchOptions(loadMetricsHUD: true))
+        #expect(atStart.environment["MTL_HUD_ENABLED"] == "1" && atStart.environment["MTL_HUD_HIDDEN"] == nil)
     }
 
     @Test func shortcutIsOnUnlessTurnedOff() throws {

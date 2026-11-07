@@ -166,6 +166,13 @@ struct PrefixRow: View {
             }
             let users = model.games.filter { $0.prefixID == prefix.id }.map(\.name)
             if !users.isEmpty { Text("Used by: \(users.joined(separator: ", "))").font(.caption).foregroundStyle(.secondary) }
+            if model.engineUpdate(for: prefix) != nil {
+                HStack {
+                    Text("Runs on an older game engine. Updating keeps its games, saves and settings.")
+                        .font(.caption).foregroundStyle(Theme.warning)
+                    Button("Update Game Engine") { model.moveToNewestEngine(prefix) }.controlSize(.small)
+                }
+            }
             if case .exited(let code) = state, code != 0 {
                 Text("Last operation exited with code \(code). See Diagnostics.").font(.caption).foregroundStyle(Theme.danger)
             }

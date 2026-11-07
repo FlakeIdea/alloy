@@ -112,7 +112,9 @@ public struct WineBackend: CompatibilityBackend {
                            hasSteamWebHelperFix: hasWebHelperFix,
                            hasGnuTLS: bcrypt.range(of: Data("libgnutls".utf8)) != nil,
                            hasGStreamer: fileManager.fileExists(atPath: wineLib.appendingPathComponent("x86_64-unix/winegstreamer.so").path)
-                               && fileManager.fileExists(atPath: VideoPlayback.pluginFolder(root: root).path))
+                               && fileManager.fileExists(atPath: VideoPlayback.pluginFolder(root: root).path),
+                           // The bundle's Info.plist is written by ntdll, so the games category is in its strings.
+                           hasGameModeBundles: ntdll.range(of: Data("public.app-category.games".utf8)) != nil)
     }
 
     static func kind(forAppName name: String) -> RuntimeKind {
@@ -315,7 +317,8 @@ public struct WineBackend: CompatibilityBackend {
         if !dxmtConfig.isEmpty { env["DXMT_CONFIG"] = dxmtConfig.joined(separator: ";") }
         if runtime.hasGStreamer { env.merge(VideoPlayback.environment(for: runtime)) { _, new in new } }
         // Shown from the start when the game asks for it; otherwise loaded for the shortcut and hidden as it appears.
-        if (g.metalHUD || options.loadMetricsHUD) && caps.supportsMetalHUD { env["MTL_HUD_ENABLED"] = "1" }
+        // Loaded for the metrics shortcut, the HUD starts hidden; it starts shown when the game is set to show it.
+        if (g.metalHUD || options.loadMetricsHUD) && caps.supportsMetalHUD { env.merge(MetricsHUD.environment(shown: g.metalHUD)) { $1 } }
         // The game then sees an NVIDIA GPU and offers DLSS; the NGX shim runs MetalFX (MetalFXDLSS sets it up).
         if g.dlss && caps.metalFXUpscaling.contains(g.backend), let key = MetalFXDLSS.environmentKey(for: g.backend) { env[key] = "1" }
         if g.advertiseAVX && caps.supportsAVXAdvertisement { env["ROSETTA_ADVERTISE_AVX"] = "1" }

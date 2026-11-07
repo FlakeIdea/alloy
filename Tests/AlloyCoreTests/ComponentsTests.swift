@@ -143,10 +143,13 @@ import Testing
             mode.apply(to: &g)
             #expect(PlayMode.current(of: g) == mode)
         }
+        // Sharp turns MetalFX scaling off so frames aren't upscaled twice; the other modes turn it back on.
         PlayMode.sharp.apply(to: &g)
-        #expect(g.metalFXSpatialFactor == 2 && g.frameRateCap == .displayMaximum)
+        #expect(g.metalFXSpatialFactor == 2 && g.frameRateCap == .displayMaximum && !g.dlss)
         PlayMode.batterySaver.apply(to: &g)
-        #expect(g.frameRateCap == .fixed(60) && g.metalFXSpatialFactor == nil)
+        #expect(g.frameRateCap == .fixed(60) && g.metalFXSpatialFactor == nil && g.dlss)
+        PlayMode.balanced.apply(to: &g)
+        #expect(g.dlss)
         g.frameRateCap = .fixed(90)
         #expect(PlayMode.current(of: g) == nil)
     }

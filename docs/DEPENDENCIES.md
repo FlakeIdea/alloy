@@ -50,7 +50,7 @@ Alloy runtimes are built locally from it. Nothing from CrossOver.app itself is c
 | Component | Use | Licence |
 |---|---|---|
 | Wine 11.0 (CrossOver tree) | The runtime itself | LGPL-2.1+ |
-| `patches/wine/*.patch` | Alloy's changes to Wine: Steam web helper switches, keeping ProMotion at 120 Hz in exclusive fullscreen, Game Mode bundles, per-stream sample waits in the media source, H.264 decoding to system memory when the Direct3D device has no NV12 textures | LGPL-2.1+, like Wine |
+| `patches/wine/*.patch` | Alloy's changes to Wine: Steam web helper switches, keeping ProMotion at 120 Hz in exclusive fullscreen, Game Mode bundles, per-stream sample waits in the media source, H.264 decoding to system memory when the Direct3D device has no NV12 textures, keeping a hidden cursor hidden, mouse-look at the edge of a confined cursor's window | LGPL-2.1+, like Wine |
 | GStreamer 1.24, GLib 2.78 (from the same source release) | `lib/` and `lib/gstreamer-1.0` in each runtime, for winegstreamer (video in Media Foundation and DirectShow). H.264/AAC decoding uses Apple's VideoToolbox/AudioToolbox; no patent-encumbered software decoder is built | LGPL-2.1+ |
 | GnuTLS 3.8.3, with its built-in libtasn1 and libunistring | `lib/libgnutls.30.dylib` in each runtime, for bcrypt and schannel | LGPL-2.1+ |
 | nettle 3.10, GMP | Linked statically into that library | LGPL-3+ or GPL-2+ (dual) |

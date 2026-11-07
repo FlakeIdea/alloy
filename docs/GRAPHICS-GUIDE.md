@@ -28,7 +28,7 @@ The biggest gain comes from a lower resolution. In the game, choose about half y
 
 In Alloy's GPU test, rendering at 1200 × 778 and scaling up with MetalFX ran at 137 to 172 FPS, against 91 FPS at full resolution. Sharp on its own, at full resolution, costs about 2 milliseconds per frame, so use it together with a lower resolution.
 
-If the game offers DLSS, you can try that instead: Alloy passes it to Apple's MetalFX. Don't use DLSS and Sharp together.
+If the game offers DLSS, you can try that instead: with **MetalFX scaling** on (the default in Balanced and Battery Saver), Alloy passes DLSS to Apple's MetalFX. Choosing Sharp turns MetalFX scaling off, so the picture is never upscaled twice.
 
 ## Step 5: On battery, choose Battery Saver
 

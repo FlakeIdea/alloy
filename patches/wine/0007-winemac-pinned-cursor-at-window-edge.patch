@@ -1,0 +1,89 @@
+Alloy: winemac.drv: count the cursor as pinned at the edge of the window it is confined to.
+
+Looking around in a game could stop working left or right while up and down still worked. Games confine the cursor
+with ClipCursor, often to their whole monitor or to a rect a little larger than their window. macOS confines it with
+a window's mouse confinement rect, so Wine holds the cursor to the part of the game's rect inside the window. But
+when deciding whether the cursor was pinned, which turns a move into a relative one carrying the mouse's own motion,
+Wine tested the rect the game asked for. At the window's edge the next point was still inside that rect, so the moves
+went out as absolute moves to the same place and the game saw no movement that way.
+
+The confinement handler now reports the region the cursor is really held in, read back from the window so it follows
+the window as it moves, and the pinned test and cursor clipping use it. A cursor resting within a point of the edge
+counts as pinned too.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winemac.drv/cocoa_cursorclipping.h
++++ b/dlls/winemac.drv/cocoa_cursorclipping.h
+@@ -41,6 +41,9 @@
+      */
+     - (BOOL) setCursorPosition:(CGPoint)pos;
+ 
++    /* Alloy: if provided, the region the cursor is actually held in, when that can be smaller than cursorClipRect. */
++    - (CGRect) effectiveClipRect;
++
+ @end
+ 
+ 
+--- a/dlls/winemac.drv/cocoa_cursorclipping.m
++++ b/dlls/winemac.drv/cocoa_cursorclipping.m
+@@ -494,9 +494,26 @@
+         return TRUE;
+     }
+ 
++    /* Alloy: macOS confines the cursor to the part of the game's rect that lies in the window (see
++     * rectForScreenRect:inWindow:), which is smaller than cursorClipRect when a game clips to its whole monitor or to
++     * a rect a little larger than its window. Read back from the window, so it follows the window as it moves. */
++    - (CGRect) effectiveClipRect
++    {
++        NSWindow *window = [NSApp windowWithWindowNumber:clippingWindowNumber];
++        NSRect confined = window ? [window mouseConfinementRect] : NSZeroRect;
++        CGRect effective;
++
++        if (NSIsEmptyRect(confined))
++            return cursorClipRect;
++        confined = [window convertRectToScreen:confined];
++        [[WineApplicationController sharedController] flipRect:&confined];
++        effective = CGRectIntersection(cursorClipRect, NSRectToCGRect(confined));
++        return CGRectIsEmpty(effective) ? cursorClipRect : effective;
++    }
++
+     - (void) clipCursorLocation:(CGPoint*)location
+     {
+-        clip_cursor_location(cursorClipRect, location);
++        clip_cursor_location([self effectiveClipRect], location);
+     }
+ 
+     - (void) setRetinaMode:(BOOL)mode
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -1384,6 +1384,14 @@
+     - (BOOL) clippingCursor
+     {
+         return clipCursorHandler.clippingCursor;
++    }
++
++    /* Alloy: the region the cursor is held in while clipping. */
++    - (CGRect) effectiveCursorClipRect
++    {
++        if ([clipCursorHandler respondsToSelector:@selector(effectiveClipRect)])
++            return [clipCursorHandler effectiveClipRect];
++        return clipCursorHandler.cursorClipRect;
+     }
+ 
+     - (BOOL) isKeyPressed:(uint16_t)keyCode
+@@ -1544,7 +1552,13 @@
+ 
+                 // Assume cursor is pinned for now
+                 absolute = FALSE;
+-                if (!self.clippingCursor || CGRectContainsPoint(clipCursorHandler.cursorClipRect, computedPoint))
++                /* Alloy: test against where the cursor is really held, not the rect the game asked for. macOS holds it
++                   to the part of that rect inside the game's window; at that window's edge the next point was still
++                   inside the asked-for rect, so the moves went out as absolute ones to the same place and the game
++                   saw no movement that way (looking left or right stuck while up and down still worked). The 1-point
++                   inset also counts a cursor resting a fraction of a point inside the edge as pinned. */
++                if (!self.clippingCursor ||
++                    CGRectContainsPoint(CGRectInset([self effectiveCursorClipRect], 1, 1), computedPoint))
+                 {
+                     const CGRect* rects;
+                     NSUInteger count, i;

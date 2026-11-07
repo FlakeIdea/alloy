@@ -122,7 +122,7 @@ public enum GraphicsDefaults {
         public var reason: String
         /// An Unreal Engine game that also has DirectX 12 must be told to use DX11 on DXMT.
         public var forceDX11 = false
-        /// The game ships DLSS and the chosen path translates it to MetalFX.
+        /// MetalFX scaling (DLSS → MetalFX): on wherever the chosen path has it, as in the Balanced and Battery Saver modes.
         public var dlss = false
         /// The game ships DLSS Frame Generation and the chosen path runs it as MetalFX frame generation.
         public var frameGeneration = false
@@ -147,10 +147,9 @@ public enum GraphicsDefaults {
         var choice = choose(usage: traits.usage, machine: traits.machine, runtimes: runtimes,
                             preferredRuntime: preferredRuntime, backend: backend)
         choice.forceDX11 = choice.backend == .dxmt && traits.isUnreal && traits.usage.contains(.d3d12)
-        if traits.dlss.contains(.upscaling), let runtime = choice.runtime,
-           backend.capabilities(of: runtime).metalFXUpscaling.contains(choice.backend) {
+        if let runtime = choice.runtime, backend.capabilities(of: runtime).metalFXUpscaling.contains(choice.backend) {
             choice.dlss = true
-            choice.reason += " DLSS → MetalFX on: the game ships DLSS."
+            if traits.dlss.contains(.upscaling) { choice.reason += " MetalFX scaling on: the game ships DLSS." }
         }
         return choice
     }

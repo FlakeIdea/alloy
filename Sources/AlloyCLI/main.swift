@@ -403,10 +403,7 @@ do {
             print("[alloy] Crash window turned off in \(p.name) (crashes go to the log): \(reg.waitUntilExit(timeout: 30).summary)")
         }
         let start = Date()
-        // As in the app: the HUD loads for the metrics shortcut and is hidden in each process as it appears.
-        let hider = metricsHidden && !graphics.metalHUD ? MetricsHUD.Hider() : nil
-        let session = try launcher.launch(gameID: game.id, gameName: game.name, command: cmd,
-                                          onLine: hider.map { hider in { hider.observe($0) } })
+        let session = try launcher.launch(gameID: game.id, gameName: game.name, command: cmd)
         let state = stream(session, timeout: timeout, prefix: p)
         print("[alloy] \(state.summary) after \(Int(Date().timeIntervalSince(start)))s; log: \(session.logFile?.path ?? "-")")
         if let sp = SuperpositionResult.parse(log: session.fullLog) {

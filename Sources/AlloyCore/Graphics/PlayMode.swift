@@ -8,7 +8,8 @@ public enum PlayMode: String, CaseIterable, Identifiable, Sendable {
     case batterySaver
     /// As smooth as the display allows. The default.
     case balanced
-    /// MetalFX upscales every frame to the Retina pixel size (DXMT only); a little slower.
+    /// MetalFX upscales every frame to the Retina pixel size (DXMT only); a little slower. It turns off MetalFX scaling
+    /// (DLSS → MetalFX), so a game's frames are never upscaled twice.
     case sharp
 
     public var id: String { rawValue }
@@ -47,11 +48,12 @@ public enum PlayMode: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Battery Saver and Balanced turn MetalFX scaling (DLSS → MetalFX) on; it can then be turned off on its own.
     public func apply(to g: inout GraphicsConfiguration) {
         switch self {
-        case .batterySaver: g.frameRateCap = .fixed(60); g.metalFXSpatialFactor = nil
-        case .balanced: g.frameRateCap = .displayMaximum; g.metalFXSpatialFactor = nil
-        case .sharp: g.frameRateCap = .displayMaximum; g.metalFXSpatialFactor = 2
+        case .batterySaver: g.frameRateCap = .fixed(60); g.metalFXSpatialFactor = nil; g.dlss = true
+        case .balanced: g.frameRateCap = .displayMaximum; g.metalFXSpatialFactor = nil; g.dlss = true
+        case .sharp: g.frameRateCap = .displayMaximum; g.metalFXSpatialFactor = 2; g.dlss = false
         }
     }
 

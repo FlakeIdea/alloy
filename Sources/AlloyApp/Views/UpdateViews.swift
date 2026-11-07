@@ -57,6 +57,8 @@ final class Updater: ObservableObject {
         let last = UserDefaults.standard.double(forKey: key)
         if last > 0, Date().timeIntervalSince1970 - last < AppUpdate.interval { return }
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: key)
+        // The game engine list too, so an engine update shows on game pages without opening Setup.
+        if model.manifest == nil, model.settings.componentsURL != nil { model.loadManifest() }
         guard case .idle = state, let result = try? await AppUpdate.check(currentVersion: Flake.version) else { return }
         if case .available(let release) = result { state = .available(release) }
     }
