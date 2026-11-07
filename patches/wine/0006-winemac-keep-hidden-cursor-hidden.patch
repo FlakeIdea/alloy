@@ -1,0 +1,62 @@
+Alloy: winemac.drv: keep a hidden cursor hidden.
+
+Games hide the cursor and use the mouse for looking around, but the macOS cursor kept showing up over them:
+- macOS shows a hidden cursor again by itself (the menu bar or Dock sliding in, notifications, app switching,
+  screenshots) without telling the app. Wine still believed it hidden and never hid it again, so it stayed on screen
+  until the game changed its cursor. While the game wants it hidden, hide it again at most every 0.25 s as the mouse
+  moves; the hide count stays at one.
+- A game that confines the cursor to its window can push it onto the window's right or bottom edge, which
+  NSMouseInRect counts as outside the window, and the menu bar, a notification or another app's window can lie over
+  a fullscreen game. Wine then showed the cursor and dropped the mouse moves. While the cursor is confined, or a
+  fullscreen window that hid it had it, that window stays the target.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winemac.drv/cocoa_app.m	2026-11-05 17:17:51
++++ b/dlls/winemac.drv/cocoa_app.m	2026-11-05 17:18:50
+@@ -1038,11 +1038,29 @@
+     {
+         return ([originalDisplayModes count] > 0 || displaysCapturedForFullscreen);
+     }
++
++    /* Alloy: when the cursor was last hidden again (see updateCursor:). */
++    static NSTimeInterval lastCursorRehide;
+ 
+     - (void) updateCursor:(BOOL)force
+     {
+         if (force || lastTargetWindow)
+         {
++            /* Alloy: macOS shows a hidden cursor again by itself (the menu bar or Dock sliding in, notifications,
++               app switching, screenshots) without telling the app, so cursorHidden can be TRUE while the cursor is
++               on screen, and it stayed there until the game changed its cursor. Hide it again now and then; the
++               hide count stays at one. */
++            if (clientWantsCursorHidden && cursorHidden)
++            {
++                NSTimeInterval now = [[NSProcessInfo processInfo] systemUptime];
++                if (now - lastCursorRehide > 0.25)
++                {
++                    [NSCursor unhide];
++                    [NSCursor hide];
++                    lastCursorRehide = now;
++                }
++            }
++
+             if (clientWantsCursorHidden && !cursorHidden)
+             {
+                 [NSCursor hide];
+@@ -1467,6 +1485,15 @@
+             targetWindow = (WineWindow*)[NSApp windowWithWindowNumber:windowUnderNumber];
+             if (!NSMouseInRect(point, [targetWindow contentRectForFrameRect:[targetWindow frame]], NO))
+                 targetWindow = nil;
++
++            /* Alloy: a game that confines the cursor to its window can push it onto the window's right or bottom
++               edge, which NSMouseInRect counts as outside, and the menu bar, a notification or another app's window
++               can lie on top of a fullscreen game. Either way the cursor was shown and the moves were dropped. While
++               the cursor is confined, or a fullscreen window had it, keep that window as the target. */
++            if (![targetWindow isKindOfClass:[WineWindow class]] && lastTargetWindow &&
++                (self.clippingCursor || (clientWantsCursorHidden && [lastTargetWindow isFullscreen])) &&
++                NSPointInRect(point, NSInsetRect([lastTargetWindow contentRectForFrameRect:[lastTargetWindow frame]], -1, -1)))
++                targetWindow = lastTargetWindow;
+         }
+ 
+         if ([targetWindow isKindOfClass:[WineWindow class]])

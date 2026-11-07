@@ -1,0 +1,100 @@
+Alloy: winegstreamer: decode to system memory when the device has no NV12 textures, and offer NV12 last.
+
+Unreal Engine 5's Electra player decodes H.264 with this decoder the Windows way: it hands the decoder a DXGI device
+manager and asks for NV12. DXMT 0.80 cannot create NV12 textures, so the sample allocator failed on the first
+frame and the decoder returned E_INVALIDARG from every ProcessOutput: 0 of 48 frames of a test clip decoded.
+SET_D3D_MANAGER now checks the device first and, when it cannot create NV12 textures, declines with E_NOTIMPL, as a
+decoder without Direct3D support does; the caller then decodes to system memory (48 of 48 frames). Wine's own Source
+Reader ignores the result and its topology loader only goes on with Direct3D when it succeeds.
+
+CrossOver hides NV12 from the output types on macOS (CW HACK 26265), and in its place listed YV12 twice. A caller
+that looks for NV12 in the list found nothing. NV12 is now listed last: callers that take the first type still get
+YV12, as with CrossOver's change, and callers that look for NV12 find it.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winegstreamer/video_decoder.c	2026-11-01 12:21:23
++++ b/dlls/winegstreamer/video_decoder.c	2026-11-01 12:24:31
+@@ -32,6 +32,7 @@
+ #include "initguid.h"
+ 
+ #include "codecapi.h"
++#include "d3d11.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
+ WINE_DECLARE_DEBUG_CHANNEL(winediag);
+@@ -605,14 +606,21 @@
+     if (index >= decoder->output_type_count)
+         return MF_E_NO_MORE_TYPES;
+ 
+-    /* CW HACK 26265 */
+-    if (is_macos() && IsEqualGUID(decoder->output_types[index], &MFVideoFormat_NV12))
+-    {
+-        WARN("Skipping NV12 output format\n");
+-        index++;
++    /* CW HACK 26265, changed for Alloy: list NV12 last rather than not at all. Callers that take the first type
++     * still get one they convert themselves; callers that look for NV12 (Unreal Engine 5's Electra player) find it. */
++    if (is_macos())
++    {
++        UINT nv12 = 0;
+ 
+-        if (index >= decoder->output_type_count)
+-            return MF_E_NO_MORE_TYPES;
++        while (nv12 < decoder->output_type_count && !IsEqualGUID(decoder->output_types[nv12], &MFVideoFormat_NV12))
++            nv12++;
++        if (nv12 < decoder->output_type_count)
++        {
++            if (index == decoder->output_type_count - 1)
++                index = nv12;
++            else if (index >= nv12)
++                index++;
++        }
+     }
+ 
+     return create_output_media_type(decoder, decoder->output_types[index], NULL, type);
+@@ -851,6 +859,33 @@
+ {
+     FIXME("iface %p, id %#lx, event %p stub!\n", iface, id, event);
+     return E_NOTIMPL;
++}
++
++/* Alloy: DXMT cannot create NV12 textures, so with its device the sample allocator fails on the first frame
++ * and nothing decodes. Such a device is declined, as by a decoder without Direct3D support, and callers
++ * decode to system memory instead. */
++static BOOL device_manager_has_nv12_textures(IUnknown *manager)
++{
++    IMFDXGIDeviceManager *dxgi_manager;
++    ID3D11Device *device;
++    UINT support = 0;
++    HANDLE handle;
++    HRESULT hr;
++
++    if (FAILED(IUnknown_QueryInterface(manager, &IID_IMFDXGIDeviceManager, (void **)&dxgi_manager)))
++        return TRUE;
++    if (SUCCEEDED(hr = IMFDXGIDeviceManager_OpenDeviceHandle(dxgi_manager, &handle)))
++    {
++        if (SUCCEEDED(hr = IMFDXGIDeviceManager_GetVideoService(dxgi_manager, handle, &IID_ID3D11Device, (void **)&device)))
++        {
++            if (FAILED(ID3D11Device_CheckFormatSupport(device, DXGI_FORMAT_NV12, &support)))
++                support = 0;
++            ID3D11Device_Release(device);
++        }
++        IMFDXGIDeviceManager_CloseDeviceHandle(dxgi_manager, handle);
++    }
++    IMFDXGIDeviceManager_Release(dxgi_manager);
++    return FAILED(hr) || (support & D3D11_FORMAT_SUPPORT_TEXTURE2D);
+ }
+ 
+ static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_TYPE message, ULONG_PTR param)
+@@ -863,6 +898,11 @@
+     switch (message)
+     {
+     case MFT_MESSAGE_SET_D3D_MANAGER:
++        if (param && !device_manager_has_nv12_textures((IUnknown *)param))
++        {
++            WARN("The device cannot create NV12 textures; decoding to system memory.\n");
++            return E_NOTIMPL;
++        }
+         if (FAILED(hr = IMFVideoSampleAllocatorEx_SetDirectXManager(decoder->allocator, (IUnknown *)param)))
+             return hr;
+ 

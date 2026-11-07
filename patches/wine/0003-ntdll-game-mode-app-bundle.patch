@@ -1,0 +1,166 @@
+Alloy: ntdll: start Windows programs from a small app bundle in the games category, so macOS turns on Game Mode.
+
+macOS enables Game Mode (CPU and GPU priority, lower Bluetooth latency for controllers and AirPods) only for apps
+whose bundle Info.plist sets LSApplicationCategoryType to public.app-category.games. Wine's loader is not in a
+bundle, and macOS ignores the Info.plist embedded in it, so Game Mode never switched on for games.
+
+CrossOver already relaunches each program through a hard link to the loader named after the .exe (CW HACK 22144,
+for the Dock). The link now goes inside <name>.app/Contents/MacOS, next to an Info.plist in the games category and
+a link to ntdll.so. Without the preloader this was only done when WINEDLLPATH was set; the ntdll.so link makes it
+unnecessary. Programs in system32 and syswow64 keep the plain link. The first process is named after the program
+it starts rather than the wine wrapper, so the Dock and menu bar show the game's name.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/ntdll/unix/loader.c	2026-11-01 03:17:44
++++ b/dlls/ntdll/unix/loader.c	2026-11-01 03:20:21
+@@ -627,16 +627,124 @@
+         return linkpath;
+ 
+ fail:
++    free(linkpath);
++    return NULL;
++}
++
++/* Alloy: macOS turns on Game Mode only for apps whose bundle Info.plist puts them in the games category, and it
++ * ignores the Info.plist embedded in the loader. So the link to the loader for a Windows program goes inside a
++ * minimal app bundle, <tempdir>/<name>.app/Contents/MacOS/<name>, with a link to ntdll.so next to it (the loader
++ * looks for ntdll.so in its own folder). Wine's own programs in system32 keep a plain link. */
++static BOOL is_system_program(const char *image_path)
++{
++    return strcasestr(image_path, "system32") || strcasestr(image_path, "syswow64");
++}
++
++static void write_xml_text(FILE *f, const char *str)
++{
++    for (; *str; str++)
++    {
++        if (*str == '&') fputs("&amp;", f);
++        else if (*str == '<') fputs("&lt;", f);
++        else if (*str == '>') fputs("&gt;", f);
++        else fputc(*str, f);
++    }
++}
++
++static BOOL write_game_info_plist(const char *path, const char *exe_name)
++{
++    char *tmp;
++    const char *p;
++    FILE *f;
++
++    /* Written next to its final name and renamed, so two processes starting the same program never see half a file. */
++    if (asprintf(&tmp, "%s.%d", path, (int)getpid()) < 0) return FALSE;
++    if (!(f = fopen(tmp, "w")))
++    {
++        free(tmp);
++        return FALSE;
++    }
++    fputs("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
++          "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
++          "<plist version=\"1.0\">\n<dict>\n    <key>CFBundleExecutable</key>\n    <string>", f);
++    write_xml_text(f, exe_name);
++    fputs("</string>\n    <key>CFBundleIdentifier</key>\n    <string>org.alloy.hosted.", f);
++    for (p = exe_name; *p; p++)
++    {
++        BOOL valid = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '.';
++        fputc(valid ? *p : '-', f);
++    }
++    fputs("</string>\n    <key>CFBundleName</key>\n    <string>", f);
++    write_xml_text(f, exe_name);
++    fputs("</string>\n"
++          "    <key>CFBundleInfoDictionaryVersion</key>\n    <string>6.0</string>\n"
++          "    <key>CFBundlePackageType</key>\n    <string>APPL</string>\n"
++          "    <key>NSPrincipalClass</key>\n    <string>WineApplication</string>\n"
++          "    <key>LSApplicationCategoryType</key>\n    <string>public.app-category.games</string>\n"
++          "    <key>LSUIElement</key>\n    <string>1</string>\n"
++          "</dict>\n</plist>\n", f);
++    if (fclose(f) || rename(tmp, path))
++    {
++        unlink(tmp);
++        free(tmp);
++        return FALSE;
++    }
++    free(tmp);
++    return TRUE;
++}
++
++static char *create_game_bundle_link(const char *wineloader_path, const char *exe_name)
++{
++    char *tempdir, *bundle = NULL, *contents = NULL, *macos = NULL, *plist = NULL, *ntdll = NULL, *ntdll_target = NULL;
++    char *linkpath = NULL;
++    struct stat st;
++    BOOL ok = FALSE;
++
++    if (!(tempdir = create_tempdir(wineloader_path)))
++        return NULL;
++    if (asprintf(&bundle, "%s%s.app", tempdir, exe_name) < 0) bundle = NULL;
++    if (bundle && asprintf(&contents, "%s/Contents", bundle) < 0) contents = NULL;
++    if (contents && asprintf(&macos, "%s/MacOS", contents) < 0) macos = NULL;
++    if (contents && asprintf(&plist, "%s/Info.plist", contents) < 0) plist = NULL;
++    if (macos && asprintf(&ntdll, "%s/ntdll.so", macos) < 0) ntdll = NULL;
++    if (asprintf(&ntdll_target, "%sntdll.so", tempdir) < 0) ntdll_target = NULL;
++    if (macos && asprintf(&linkpath, "%s/%s", macos, exe_name) < 0) linkpath = NULL;
++    if (!plist || !ntdll || !ntdll_target || !linkpath || strlen(linkpath) >= MAX_PATH)
++        goto done;
++
++    /* mkdir and symlink may fail because another process made them first; that's ok */
++    mkdir(bundle, 0700);
++    mkdir(contents, 0700);
++    mkdir(macos, 0700);
++    if (stat(plist, &st) && !write_game_info_plist(plist, exe_name))
++        goto done;
++    symlink(ntdll_target, ntdll);
++    /* A hard link: through a symlink macOS would see the loader outside the bundle. */
++    ok = !stat(linkpath, &st) || !link(wineloader_path, linkpath);
++
++done:
++    free(tempdir);
++    free(bundle);
++    free(contents);
++    free(macos);
++    free(plist);
++    free(ntdll);
++    free(ntdll_target);
++    if (ok) return linkpath;
+     free(linkpath);
+     return NULL;
+ }
+ 
+ static void replace_wineloader_path_with_link(char **wineloader_path, const char *image_path)
+ {
+-    char *app_name = extract_exe_name(image_path);
++    char *app_name = image_path ? extract_exe_name(image_path) : NULL;
+     if (app_name)
+     {
+-        char *preloader_path = create_preloader_link(*wineloader_path, app_name);
++        char *preloader_path = NULL;
++        if (!is_system_program(image_path))
++            preloader_path = create_game_bundle_link(*wineloader_path, app_name);
++        if (!preloader_path)
++            preloader_path = create_preloader_link(*wineloader_path, app_name);
+         if (preloader_path)
+         {
+             free(*wineloader_path);
+@@ -678,9 +786,10 @@
+      * which will show up as the icon name in the Dock.
+      * When the preloader is not being used, WINEDLLPATH needs to be set correctly for
+      * the loader to find ntdll.so, so don't even attempt this unless WINEDLLPATH is set.
++     * Alloy: the link always has ntdll.so next to it, which the loader finds without WINEDLLPATH, so this is
++     * done for every program (Game Mode needs it).
+      */
+-    if (getenv("WINEDLLPATH"))
+-        replace_wineloader_path_with_link( &(argv[1]), image_path );
++    replace_wineloader_path_with_link( &(argv[1]), image_path );
+ #endif
+ 
+     execv( argv[1], argv + 1 );
+@@ -2543,7 +2652,8 @@
+     /* default to 32-bit loader to support 32-bit prefixes */
+     if (machine == IMAGE_FILE_MACHINE_AMD64) machine = IMAGE_FILE_MACHINE_I386;
+ 
+-    loader_exec( new_argv, machine, argv[0] );
++    /* Alloy: name the link after the program being started, not the wine wrapper. */
++    loader_exec( new_argv, machine, argc > 1 ? argv[1] : argv[0] );
+     fatal_error( "could not exec the wine loader\n" );
+ }
+ 

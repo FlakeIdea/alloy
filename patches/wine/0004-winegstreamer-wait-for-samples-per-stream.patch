@@ -1,0 +1,186 @@
+Alloy: winegstreamer: wait for each stream's samples on its own queue.
+
+The media source ran every command, sample requests included, on one serial work queue, and a request waited there
+until GStreamer produced that stream's next buffer. A stream can only get its next buffer once the others have been
+read: Wine holds one buffer per stream, and the demuxer's queue holds 2 MB. When a file has more than that between
+two buffers of one stream, the wait blocked the requests for the other streams, nothing read them, and playback froze
+for good. A 3440x1440, 57 Mbit/s QuickTime file with 16-bit PCM audio in half-second chunks (a game's main menu
+background) froze on its first audio request; the game then waited forever for the session to
+respond, with the cursor still moving.
+
+Requests are still accepted in order on the source's queue, so they stay ordered with Start, Pause and Stop; the wait
+for the sample now runs on a queue of the stream's own. After a wait, a source that has stopped drops the sample, and
+one that has shut down leaves the parser alone. The token queue now holds its own reference to each token: the
+command it came from releases its reference when it finishes.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winegstreamer/media_source.c	2026-11-01 08:27:09
++++ b/dlls/winegstreamer/media_source.c	2026-11-01 08:27:43
+@@ -137,6 +137,11 @@
+     DWORD stream_id;
+     BOOL active;
+     BOOL eos;
++
++    /* Waits for this stream's samples. A wait holds up only its own stream: on the source's queue, a stream starved
++     * until another one is read (a large video chunk ahead of the next audio chunk) blocked every stream's requests,
++     * and with them the reads that would have let the starved stream progress. */
++    DWORD sample_queue;
+ };
+ 
+ enum source_async_op
+@@ -145,6 +150,7 @@
+     SOURCE_ASYNC_PAUSE,
+     SOURCE_ASYNC_STOP,
+     SOURCE_ASYNC_REQUEST_SAMPLE,
++    SOURCE_ASYNC_WAIT_SAMPLE,
+ };
+ 
+ struct source_async_command
+@@ -271,10 +277,12 @@
+             IMFPresentationDescriptor_Release(command->u.start.descriptor);
+             PropVariantClear(&command->u.start.position);
+         }
+-        else if (command->op == SOURCE_ASYNC_REQUEST_SAMPLE)
++        else if (command->op == SOURCE_ASYNC_REQUEST_SAMPLE || command->op == SOURCE_ASYNC_WAIT_SAMPLE)
+         {
+             if (command->u.request_sample.token)
+                 IUnknown_Release(command->u.request_sample.token);
++            if (command->op == SOURCE_ASYNC_WAIT_SAMPLE)
++                IMFMediaStream_Release(&command->u.request_sample.stream->IMFMediaStream_iface);
+         }
+         free(command);
+     }
+@@ -526,6 +534,8 @@
+             return FALSE;
+         }
+     }
++    if (token)
++        IUnknown_AddRef(token);
+     stream->token_queue[stream->token_queue_count++] = token;
+     return TRUE;
+ }
+@@ -806,17 +816,49 @@
+ 
+     while (stream_get_buffer(stream, &buffer))
+     {
+-        HRESULT hr = media_stream_send_sample(stream, &buffer, token);
+-        if (hr != S_FALSE)
++        HRESULT hr;
++
++        /* source->cs was released while waiting. After a shutdown the parser and its streams are gone. */
++        if (source->state == SOURCE_SHUTDOWN)
++            return S_OK;
++        /* A stopped source drops its requests, and restarts from a seek. */
++        if (source->state == SOURCE_STOPPED || !stream->active)
++        {
++            wg_parser_stream_release_buffer(stream->wg_stream);
++            return S_OK;
++        }
++        if ((hr = media_stream_send_sample(stream, &buffer, token)) != S_FALSE)
+             return hr;
+     }
+ 
+-    if (source->state == SOURCE_SHUTDOWN)
++    if (source->state == SOURCE_SHUTDOWN || source->state == SOURCE_STOPPED || !stream->active)
+         return S_OK;
+ 
+     return media_stream_send_eos(source, stream);
+ }
+ 
++/* Hands a request the source has accepted to the stream's own queue to wait for its sample. */
++static HRESULT queue_sample_wait(struct media_source *source, struct media_stream *stream, IUnknown *token)
++{
++    struct source_async_command *command;
++    IUnknown *op;
++    HRESULT hr;
++
++    if (FAILED(hr = source_create_async_op(SOURCE_ASYNC_WAIT_SAMPLE, &op)))
++        return hr;
++
++    command = impl_from_async_command_IUnknown(op);
++    IMFMediaStream_AddRef(&stream->IMFMediaStream_iface);
++    command->u.request_sample.stream = stream;
++    if (token)
++        IUnknown_AddRef(token);
++    command->u.request_sample.token = token;
++
++    hr = MFPutWorkItem(stream->sample_queue, &source->async_commands_callback, op);
++    IUnknown_Release(op);
++    return hr;
++}
++
+ static HRESULT WINAPI source_async_commands_Invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
+ {
+     struct media_source *source = impl_from_async_commands_callback_IMFAsyncCallback(iface);
+@@ -855,6 +897,16 @@
+                 enqueue_token(command->u.request_sample.stream, command->u.request_sample.token);
+             else if (source->state == SOURCE_RUNNING)
+             {
++                if (FAILED(hr = queue_sample_wait(source, command->u.request_sample.stream, command->u.request_sample.token)))
++                    WARN("Failed to queue sample request, hr %#lx\n", hr);
++            }
++            break;
++        case SOURCE_ASYNC_WAIT_SAMPLE:
++            /* Runs on the stream's queue; the source may have paused or stopped since it accepted the request. */
++            if (source->state == SOURCE_PAUSED)
++                enqueue_token(command->u.request_sample.stream, command->u.request_sample.token);
++            else if (source->state == SOURCE_RUNNING && command->u.request_sample.stream->active)
++            {
+                 if (FAILED(hr = wait_on_sample(command->u.request_sample.stream, command->u.request_sample.token)))
+                     WARN("Failed to request sample, hr %#lx\n", hr);
+             }
+@@ -1139,6 +1191,12 @@
+         free(object);
+         return hr;
+     }
++    if (FAILED(hr = MFAllocateWorkQueue(&object->sample_queue)))
++    {
++        IMFMediaEventQueue_Release(object->event_queue);
++        free(object);
++        return hr;
++    }
+ 
+     IMFMediaSource_AddRef(source);
+     object->media_source = source;
+@@ -1563,6 +1621,8 @@
+ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
+ {
+     struct media_source *source = impl_from_IMFMediaSource(iface);
++    DWORD *sample_queues;
++    UINT i, queue_count = 0;
+ 
+     TRACE("%p.\n", iface);
+ 
+@@ -1586,6 +1646,12 @@
+     IMFMediaEventQueue_Shutdown(source->event_queue);
+     IMFByteStream_Close(source->byte_stream);
+ 
++    if ((sample_queues = calloc(source->stream_count, sizeof(*sample_queues))))
++    {
++        for (i = 0; i < source->stream_count; i++)
++            sample_queues[queue_count++] = source->streams[i]->sample_queue;
++    }
++
+     while (source->stream_count--)
+     {
+         struct media_stream *stream = source->streams[source->stream_count];
+@@ -1599,6 +1665,10 @@
+ 
+     LeaveCriticalSection(&source->cs);
+ 
++    /* Unlocking waits for running callbacks; a wait woken by the disconnect needs source->cs to finish. */
++    for (i = 0; i < queue_count; i++)
++        MFUnlockWorkQueue(sample_queues[i]);
++    free(sample_queues);
+     MFUnlockWorkQueue(source->async_commands_queue);
+ 
+     return S_OK;
+@@ -1730,6 +1800,7 @@
+     {
+         struct media_stream *stream = object->streams[object->stream_count];
+         IMFStreamDescriptor_Release(object->descriptors[object->stream_count]);
++        MFUnlockWorkQueue(stream->sample_queue);
+         IMFMediaStream_Release(&stream->IMFMediaStream_iface);
+     }
+     free(object->descriptors);

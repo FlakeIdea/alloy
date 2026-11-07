@@ -1,0 +1,64 @@
+Alloy: winemac.drv: keep a display at its fastest refresh rate for a requested size.
+
+ProMotion (and other variable-refresh) displays list 120 Hz next to 60 Hz for each size. A game that switches to
+exclusive fullscreen at 60 Hz made Wine set the whole Mac display to 60 Hz, so vsync held the game to 60 FPS even
+with its frame limit off. When the display offers a faster mode at the same size, flags and depth, use it. Requests
+the display cannot meet are handled as before.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winemac.drv/display.c	2026-11-01 01:31:09
++++ b/dlls/winemac.drv/display.c	2026-11-01 01:31:09
+@@ -727,8 +727,9 @@
+ 
+ static CGDisplayModeRef find_best_display_mode(DEVMODEW *devmode, CFArrayRef display_modes, int bpp, struct display_mode_descriptor *desc)
+ {
+-    CFIndex count, i, best;
+-    CGDisplayModeRef best_display_mode;
++    CFIndex count, i, best, fastest = -1;
++    CGDisplayModeRef best_display_mode, fastest_display_mode = NULL;
++    double fastest_refresh_rate = 0;
+ 
+     best_display_mode = NULL;
+ 
+@@ -758,13 +759,24 @@
+             continue;
+         if (devmode->dmPelsHeight != height)
+             continue;
+-        if (devmode->dmDisplayFrequency != (DWORD)refresh_rate)
+-            continue;
+         if (!(devmode->dmDisplayFlags & DM_INTERLACED) != !(io_flags & kDisplayModeInterlacedFlag))
+             continue;
+         if (!(devmode->dmDisplayFixedOutput == DMDFO_STRETCH) != !(io_flags & kDisplayModeStretchedFlag))
+             continue;
+ 
++        /* Alloy: remember the fastest mode at this size. ProMotion and other variable-refresh displays list 120 Hz
++         * next to 60 Hz; games that ask for 60 Hz in exclusive fullscreen would otherwise switch the whole display
++         * to 60 Hz and be held to 60 FPS by vsync. */
++        if (refresh_rate > fastest_refresh_rate)
++        {
++            fastest_display_mode = display_mode;
++            fastest_refresh_rate = refresh_rate;
++            fastest = i;
++        }
++
++        if (devmode->dmDisplayFrequency != (DWORD)refresh_rate)
++            continue;
++
+         if (best_display_mode)
+             continue;
+ 
+@@ -772,6 +784,13 @@
+         best = i;
+     }
+ 
++    if (best_display_mode && fastest_display_mode && fastest_refresh_rate > devmode->dmDisplayFrequency)
++    {
++        FIXME("HACK: using mode %ld at %.0f Hz instead of the requested %u Hz\n", fastest, fastest_refresh_rate,
++              (unsigned int)devmode->dmDisplayFrequency);
++        return fastest_display_mode;
++    }
++
+     if (best_display_mode)
+         TRACE("Requested display settings match mode %ld\n", best);
+ 

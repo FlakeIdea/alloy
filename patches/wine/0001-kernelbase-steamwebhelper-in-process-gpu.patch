@@ -1,0 +1,46 @@
+kernelbase: Start Steam's web helper with its compositor in-process.
+
+Chromium's GPU process draws into the browser's window from another process. The macOS
+driver cannot show that, so Steam's sign-in window and library stay black. Appending
+--no-sandbox --in-process-gpu --disable-gpu to the web helper's browser process keeps
+compositing in the process that owns the window and renders in software, the same
+switches Proton gives steamwebhelper.exe. Child processes (--type=...) are left alone;
+Chromium passes them what they need.
+
+Applies to the Wine tree in CrossOver's source release (26.3.0). Wine is LGPL 2.1+;
+this patch is under the same licence.
+
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -545,6 +545,31 @@
+         app_name = name;
+     }
+ 
++    /* Alloy: Chromium's GPU process draws into the browser's window from another process, which the
++     * macOS driver cannot show, so Steam's web views stay black. Keep the compositor in the browser
++     * process and render in software, as Proton does. Only the browser process gets the switches;
++     * Chromium passes what its children need. */
++    {
++        const WCHAR *exe = wcsrchr( app_name, '\\' );
++        exe = exe ? exe + 1 : app_name;
++        if (!wcsicmp( exe, L"steamwebhelper.exe" ) && !wcsstr( tidy_cmdline, L"--type=" )
++            && !wcsstr( tidy_cmdline, L"--in-process-gpu" ))
++        {
++            static const WCHAR extra[] = L" --no-sandbox --in-process-gpu --disable-gpu";
++            SIZE_T len = lstrlenW( tidy_cmdline );
++            WCHAR *buf = RtlAllocateHeap( GetProcessHeap(), 0, (len + ARRAY_SIZE(extra)) * sizeof(WCHAR) );
++
++            if (buf)
++            {
++                memcpy( buf, tidy_cmdline, len * sizeof(WCHAR) );
++                memcpy( buf + len, extra, sizeof(extra) );
++                FIXME( "HACK: starting the Steam web helper with%s\n", debugstr_w(extra) );
++                if (tidy_cmdline != cmd_line) RtlFreeHeap( GetProcessHeap(), 0, tidy_cmdline );
++                tidy_cmdline = buf;
++            }
++        }
++    }
++
+     /* CW Hack 24938 */
+     if (cmd_line && wcsstr(cmd_line, L"EpicGamesLauncher.exe"))
+     {

@@ -1,0 +1,36 @@
+#!/bin/sh
+# Runs as root after Installer has put Alloy.app in /Applications ($3 is the target volume). Every step may fail
+# without failing the install: Alloy's Setup page offers whatever is still missing.
+# ALLOY_DRY_RUN=1 prints the commands instead of running them (for testing without root).
+
+run() { if [ -n "${ALLOY_DRY_RUN:-}" ]; then echo "would run: $*"; else "$@"; fi; }
+log() { echo "alloy postinstall: $*"; }   # Installer writes this to /var/log/install.log
+
+[ "${3:-/}" = "/" ] || { log "installed on another volume; nothing else to do"; exit 0; }
+HERE=$(dirname "$0")
+
+# 1. Rosetta 2, which the game engine needs. The licence page told the person that agreeing installs it and accepts
+#    Apple's licence for it.
+if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && [ ! -e /Library/Apple/usr/libexec/oah/libRosettaRuntime ]; then
+  log "installing Rosetta 2 from Apple"
+  run /usr/sbin/softwareupdate --install-rosetta --agree-to-license || log "Rosetta 2 was not installed; Alloy's Setup offers it again"
+else
+  log "Rosetta 2 is already installed"
+fi
+
+# 2. Record which terms version the person accepted on the licence page, so Alloy does not ask again.
+RECORD_DIR="/Library/Application Support/Alloy"
+VERSION=$(/usr/bin/tr -cd '0-9' < "$HERE/terms-version")
+if [ -n "$VERSION" ]; then
+  run /bin/mkdir -p "$RECORD_DIR"
+  if [ -n "${ALLOY_DRY_RUN:-}" ]; then echo "would write $VERSION to $RECORD_DIR/AcceptedTerms"
+  else echo "$VERSION" > "$RECORD_DIR/AcceptedTerms" && /bin/chmod 644 "$RECORD_DIR/AcceptedTerms"; fi
+fi
+
+# 3. Open Alloy for the person at the screen, where it finishes setting up. Not for command-line or managed installs.
+CONSOLE_USER=$(/usr/bin/stat -f%Su /dev/console)
+if [ -z "${COMMAND_LINE_INSTALL:-}" ] && [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != root ] && [ "$CONSOLE_USER" != loginwindow ]; then
+  run /bin/launchctl asuser "$(/usr/bin/id -u "$CONSOLE_USER")" /usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/open /Applications/Alloy.app \
+    || log "could not open Alloy"
+fi
+exit 0
