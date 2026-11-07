@@ -13,8 +13,16 @@ public enum MetricsHUD {
 
     public static func toggle() { notify_post(toggleNotification) }
 
+    /// What the HUD's lines mean, for the app's text. The HUD always shows the size of the picture macOS gets (the
+    /// second line); `layerscale` adds its Retina scale. While MetalFX scales the game, its "MetalFX" section shows
+    /// Scaling Input Res (what the game renders) and Scaling Target Res (what it is scaled to).
+    public static let resolutionHelp = "Resolution: the second line is the size of the picture on screen, the line below it its Retina scale. While MetalFX scaling runs, a MetalFX section adds Scaling Input Res (what the game renders) and Scaling Target Res (what it's scaled to). Rendering at a lower input resolution is faster; a lower in-game resolution lowers it."
+
     /// Environment for a game's processes: the HUD loaded, and hidden until the shortcut shows it unless `shown`.
+    /// `layerscale` adds the Retina scale under the HUD's resolution line (the MetalFX section shows when MetalFX runs).
     public static func environment(shown: Bool) -> [String: String] {
-        shown ? ["MTL_HUD_ENABLED": "1"] : ["MTL_HUD_ENABLED": "1", "MTL_HUD_HIDDEN": "1"]
+        var env = ["MTL_HUD_ENABLED": "1", "MTL_HUD_EXTRA_ELEMENTS": "layerscale"]
+        if !shown { env["MTL_HUD_HIDDEN"] = "1" }
+        return env
     }
 }

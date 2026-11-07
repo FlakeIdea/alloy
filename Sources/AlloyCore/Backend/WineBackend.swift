@@ -213,6 +213,15 @@ public struct WineBackend: CompatibilityBackend {
     }
 
     public func initializePrefixCommand(prefix: WinePrefix, runtime: WineRuntime) throws -> LaunchCommand {
+        try wineboot("--init", prefix: prefix, runtime: runtime)
+    }
+
+    /// `wineboot --update` with the same overrides as `--init`, after the prefix moved to another engine.
+    public func updatePrefixCommand(prefix: WinePrefix, runtime: WineRuntime) throws -> LaunchCommand {
+        try wineboot("--update", prefix: prefix, runtime: runtime)
+    }
+
+    private func wineboot(_ mode: String, prefix: WinePrefix, runtime: WineRuntime) throws -> LaunchCommand {
         guard !prefix.isReadOnly else { throw AlloyError.prefixReadOnly(name: prefix.name) }
         // These runtimes ship without Wine Mono and Gecko. Without the overrides wineboot stops at a download
         // prompt and never finishes (offline it cannot). Install them later only if a program needs .NET or MSHTML.
@@ -222,7 +231,7 @@ public struct WineBackend: CompatibilityBackend {
         // without MSync makes them fail (msync_init: bootstrap_look_up).
         var notes: [String] = []
         applySync(runtime.hasMSync ? .msync : .off, runtime: runtime, prefix: prefix, to: &env, notes: &notes)
-        var command = LaunchCommand(executable: runtime.wineBinary, arguments: ["wineboot", "--init"], environment: env)
+        var command = LaunchCommand(executable: runtime.wineBinary, arguments: ["wineboot", mode], environment: env)
         command.notes = notes
         return command
     }
@@ -322,6 +331,10 @@ public struct WineBackend: CompatibilityBackend {
         // The game then sees an NVIDIA GPU and offers DLSS; the NGX shim runs MetalFX (MetalFXDLSS sets it up).
         if g.dlss && caps.metalFXUpscaling.contains(g.backend), let key = MetalFXDLSS.environmentKey(for: g.backend) { env[key] = "1" }
         if g.advertiseAVX && caps.supportsAVXAdvertisement { env["ROSETTA_ADVERTISE_AVX"] = "1" }
+        // XNA games (Terraria, Stardew Valley…) run on Wine Mono's FNA. Its default SDL_GPU driver uses Vulkan, which
+        // on MoltenVK can crash at the first buffer (vkCreateBuffer: external memory); Direct3D 11 goes through the
+        // game's Metal graphics instead and starts faster. Other games ignore the variable; a game's own value wins.
+        env[FNA.driverKey] = FNA.driver
         // Automatic means MSync where the build has it, as CrossOver enables for new bottles.
         let sync: SyncMode = g.syncMode == .default && caps.syncModes.contains(.msync) ? .msync : g.syncMode
         var notes: [String] = []
@@ -354,4 +367,10 @@ public struct WineBackend: CompatibilityBackend {
         if sync == .esync { env["WINEESYNC"] = "1" }
         if sync == .msync { env["WINEMSYNC"] = "1" }
     }
+}
+
+/// Wine Mono's FNA (XNA for .NET games): which FNA3D graphics driver it uses.
+public enum FNA {
+    public static let driverKey = "FNA3D_FORCE_DRIVER"
+    public static let driver = "D3D11"
 }

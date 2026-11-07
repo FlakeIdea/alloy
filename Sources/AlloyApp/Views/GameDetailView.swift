@@ -753,8 +753,8 @@ struct GameEditor: View {
                         if caps.supportsMetalHUD {
                             Toggle("Show metrics when the game starts", isOn: $draft.graphics.metalHUD)
                             Text(model.settings.metricsShortcut
-                                 ? "Metrics show FPS, frame time and memory. Press \(MetricsHotKey.display) while playing to show or hide them."
-                                 : "Metrics show FPS, frame time and memory. Turn on the metrics shortcut in Settings to show them while playing.")
+                                 ? "Metrics show FPS, frame time, memory and resolution. Press \(MetricsHotKey.display) while playing to show or hide them. \(MetricsHUD.resolutionHelp)"
+                                 : "Metrics show FPS, frame time, memory and resolution. Turn on the metrics shortcut in Settings to show them while playing. \(MetricsHUD.resolutionHelp)")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         if caps.supportsAVXAdvertisement {

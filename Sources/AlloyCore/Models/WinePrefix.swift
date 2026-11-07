@@ -46,6 +46,20 @@ public struct WinePrefix: Codable, Identifiable, Hashable, Sendable {
     }
 
     public var system32: URL { path.appendingPathComponent("drive_c/windows/system32") }
+
+    /// Wine refreshes a prefix on the next start when `.update-timestamp` doesn't hold the modification time of the
+    /// engine's wine.inf, as after moving the prefix to another engine. Started by a game, that refresh asks to
+    /// download Wine Mono; Alloy runs it first itself, without that prompt.
+    public func needsWineUpdate(for runtime: WineRuntime, fileManager: FileManager = .default) -> Bool {
+        guard isInitialized(fileManager: fileManager) else { return false }
+        let inf = runtime.wineBinary.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("share/wine/wine.inf")
+        guard let modified = (try? fileManager.attributesOfItem(atPath: inf.path))?[.modificationDate] as? Date else { return false }
+        let stamp = (try? String(contentsOf: path.appendingPathComponent(".update-timestamp"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if stamp == "disable" { return false }
+        return stamp.split(separator: " ").first.map(String.init) != String(Int(modified.timeIntervalSince1970))
+    }
 }
 
 public enum RuntimeKind: String, Codable, Sendable {

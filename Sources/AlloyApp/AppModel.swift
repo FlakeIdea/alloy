@@ -412,6 +412,7 @@ final class AppModel: ObservableObject {
             g.runtimeID = nil
             save(g)
         }
+        if let runtime = runtimes.first(where: { $0.id == newest.id }) { updateWine(in: p, runtime: runtime) }
     }
 
     func createPrefix(name: String, runtime: WineRuntime?) -> WinePrefix? {
@@ -1072,6 +1073,12 @@ final class AppModel: ObservableObject {
         // A Steam game always starts from Alloy, never from Steam: started by Steam, it got the settings Steam was opened
         // with, Alloy lost track of it, and macOS could leave it in the background without Game Mode. When Steam isn't
         // open yet, Alloy opens it quietly first and starts the game once Steam has signed in.
+        // After a move to another engine Wine refreshes the environment on the next start and, started by a game,
+        // stops to ask for Wine Mono. Alloy runs that refresh first, without the prompt, once per environment.
+        if !wineUpdateTried.contains(prefix.id), !isRunning(in: prefix), prefix.needsWineUpdate(for: runtime) {
+            updateWine(in: prefix, runtime: runtime) { [weak self] in self?.requestLaunch(game, extraArguments: extraArguments) }
+            return
+        }
         if extraArguments.isEmpty, !preparing.contains(game.id), !steamFallback.contains(game.id), !steamIsOpen(in: prefix),
            directSteamGame(game, prefix: prefix) != nil, let steam = steamEntry(in: prefix) {
             openSteamThenStart(game, steam: steam, prefix: prefix)
@@ -1146,6 +1153,28 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Environments whose Wine refresh Alloy already ran (or tried) this session.
+    private var wineUpdateTried: Set<UUID> = []
+
+    /// Runs `wineboot --update` in the environment (only Wine's own loader), then `then`. Games in it show as preparing.
+    private func updateWine(in prefix: WinePrefix, runtime: WineRuntime, then: (() -> Void)? = nil) {
+        wineUpdateTried.insert(prefix.id)
+        let waiting = Set(games.filter { $0.prefixID == prefix.id }.map(\.id))
+        preparing.formUnion(waiting)
+        let backend = self.backend, launcher = self.launcher
+        Task.detached {
+            do {
+                let session = try launcher.launch(gameID: prefix.id, gameName: "prefix-\(prefix.name)",
+                                                  command: try backend.updatePrefixCommand(prefix: prefix, runtime: runtime))
+                _ = await session.waitForExit()
+            } catch {}
+            await MainActor.run {
+                self.preparing.subtract(waiting)
+                then?()
+            }
+        }
+    }
+
     /// Games being started through steam.exe after Steam didn't open or sign in for Alloy.
     private var steamFallback: Set<UUID> = []
 
@@ -1187,7 +1216,8 @@ final class AppModel: ObservableObject {
         let autoInstall = settings.autoInstallComponents
         let knownTraits = traits[game.id]
         let backend = self.backend, downloads = componentDownloads, scans = self.scans
-        guard needsDLSS || needsVideo || needsQuietCrashes || autoInstall else { beginSession(game, command: command); return }
+        let hasSteam = StoreInstaller.executable(of: .steam, in: prefix) != nil
+        guard needsDLSS || needsVideo || needsQuietCrashes || autoInstall || hasSteam else { beginSession(game, command: command); return }
         // Set up once per environment: Windows components the game needs, video decoders for environments made before
         // their runtime had them, and for DLSS → MetalFX the NGX shim and its registry entry.
         let managed = runtime.root.standardizedFileURL.path.hasPrefix(runtimesDirectory.standardizedFileURL.path + "/")
@@ -1213,6 +1243,13 @@ final class AppModel: ObservableObject {
                         }
                     }
                 }
+            }
+            if hasSteam {
+                await AppModel.settleSteamRedist(in: prefix, runtime: runtime, backend: backend, downloads: downloads,
+                                                 like: command, autoInstall: autoInstall) { status in
+                    Task { @MainActor in self.componentStatus[prefix.id] = status }
+                }
+                await MainActor.run { self.finishedComponents(in: prefix) }
             }
             do {
                 if needsVideo { try VideoPlayback.prepare(prefix: prefix, runtime: runtime, like: command) }
@@ -1255,7 +1292,71 @@ final class AppModel: ObservableObject {
                 if store != nil { self?.importStoreGames() }
             }
             warnIfStoreBlocked(game)
+            if store == .steam, let prefix = prefix(game.prefixID) { watchSteamRedist(in: prefix, like: command) }
         } catch { report(error, title: "Launch failed") }
+    }
+
+    // MARK: Steam's first-run installers
+
+    /// Records Steam's .NET, XNA, DirectX and (once installed) Visual C++ installers as done, so Steam doesn't get
+    /// stuck "Installing…" under Wine; with automatic components on, installs Wine Mono and Visual C++ first.
+    nonisolated static func settleSteamRedist(in prefix: WinePrefix, runtime: WineRuntime, backend: WineBackend, downloads: URL,
+                                              like command: LaunchCommand, autoInstall: Bool,
+                                              progress: @escaping @Sendable (String) -> Void) async {
+        let pending = SteamRedist.pending(in: prefix)
+        guard !pending.isEmpty else { return }
+        if autoInstall {
+            let missing = SteamRedist.components(for: pending).filter {
+                !$0.isInstalled(in: prefix) && ($0 != .visualCpp || VisualCppRuntime.canInstall(in: prefix))
+            }
+            if !missing.isEmpty {
+                progress("Installing what Steam's games need…")
+                try? await installComponents(missing, into: prefix, runtime: runtime, backend: backend,
+                                             downloads: downloads, progress: progress)
+            }
+        }
+        let record = SteamRedist.recordable(pending, visualCppInstalled: VisualCppRuntime.hasMicrosoftDLLs(.x64, in: prefix))
+        guard !record.isEmpty else { return }
+        let file = prefix.path.appendingPathComponent("drive_c/windows/temp/alloy-steam-redist.reg")
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try SteamRedist.registryFile(record).write(to: file, atomically: true, encoding: .utf8)
+            let session = LaunchSession(command: VisualCppRuntime.importCommand(file: #"C:\windows\temp\alloy-steam-redist.reg"#, like: command),
+                                        logFile: nil)
+            try session.start()
+            _ = session.waitUntilExit(timeout: 60)
+        } catch {}
+        try? FileManager.default.removeItem(at: file)
+    }
+
+    /// While Steam runs, games it finishes downloading get the same treatment before the user presses Play in Steam.
+    private func watchSteamRedist(in prefix: WinePrefix, like command: LaunchCommand) {
+        guard let steamapps = StoreInstaller.executable(of: .steam, in: prefix)?.deletingLastPathComponent()
+            .appendingPathComponent("steamapps") else { return }
+        let runtime = runtimes.first { $0.id == prefix.runtimeID } ?? runtimes.first
+        guard let runtime else { return }
+        let backend = self.backend, downloads = componentDownloads, autoInstall = settings.autoInstallComponents
+        func signature() -> [String] {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: steamapps.path)) ?? []
+            return names.filter { $0.hasPrefix("appmanifest_") }.sorted().map { name in
+                let date = (try? FileManager.default.attributesOfItem(atPath: steamapps.appendingPathComponent(name).path))?[.modificationDate] as? Date
+                return "\(name)@\(date?.timeIntervalSince1970 ?? 0)"
+            }
+        }
+        Task { @MainActor [weak self] in
+            var last = signature()
+            while true {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, self.isRunning(in: prefix) else { return }
+                let now = signature()
+                guard now != last else { continue }
+                last = now
+                await Task.detached {
+                    await AppModel.settleSteamRedist(in: prefix, runtime: runtime, backend: backend, downloads: downloads,
+                                                     like: command, autoInstall: autoInstall) { _ in }
+                }.value
+            }
+        }
     }
 
     /// A game that ended badly soon after starting with DLSS → MetalFX goes back to the game's own rendering

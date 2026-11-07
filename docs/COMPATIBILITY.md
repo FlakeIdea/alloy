@@ -363,3 +363,27 @@ and when it isn't, opens Steam quietly (`-silent`), waits for "Logged On" in Ste
 starts the game itself. Game Mode needs the game frontmost and fullscreen; a game started by Alloy is started from the
 app the player just clicked. Not yet confirmed in `gamepolicyd`'s log for a Steam game.
 
+
+## Steam's first-run installers (.NET, Visual C++, DirectX)
+
+Before a game's first start Steam runs the installers in the game's `installscript.vdf` files and records each one under
+`HKLM\Software\Wow6432Node\Valve\Steam\Apps\CommonRedist`. Microsoft's .NET Framework installer never finishes under
+Wine, which left Steam stuck on "Installing…" (reported by a tester, with .NET and Visual C++). Before Steam or a game in
+its environment starts, and while Steam is open whenever it finishes downloading a game, Alloy records the .NET, XNA and
+DirectX entries as done (Wine Mono and Wine's own DirectX stand in), installs Wine Mono and Visual C++ itself when
+automatic components are on, and records Visual C++ once Microsoft's runtime is installed. Checked: the record lands in
+the 32-bit view Steam reads, in the same form Steam writes. Not yet confirmed by the tester in Steam.
+
+## XNA games (Terraria): FNA graphics driver
+
+Wine Mono 10.4.1 runs XNA games on FNA 25.11, whose default driver is SDL_GPU on Vulkan (MoltenVK). A tester's Terraria
+crashed right after `vkCreateBuffer(): Only external memory handle type … MTLBUFFER … supported` (Apple M5). Alloy sets
+`FNA3D_FORCE_DRIVER=D3D11`, so FNA draws through the game's Direct3D 11 path (DXMT). Tested with a small XNA program
+built with Wine Mono's compiler: SDL_GPU/Vulkan, D3D11 and OpenGL all drew 240 frames on an M4; D3D11 started in 2.4 s
+against 10.8 s for the default. Terraria itself has not been tested.
+
+## Input delay (Brawlhalla, reported)
+
+Not reproduced; Brawlhalla hasn't been tested. DXMT 0.80 lets a game queue up to three frames (`max_latency_ = 3`)
+with no setting to lower it, which at 60 FPS can add up to about 50 ms. A lower limit needs a DXMT change in a new
+engine build.

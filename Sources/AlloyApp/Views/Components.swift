@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import AlloyCore
 
 extension View {
@@ -103,30 +104,69 @@ struct CapabilityTag: View {
 
 struct LogConsole: View {
     let lines: [LogLine]
+    @State private var copied = false
+
+    /// The most recent lines, as one text so a selection can span lines (⌘A, ⌘C or drag).
+    static let shownLines = 3000
 
     var body: some View {
+        let shown = lines.suffix(Self.shownLines)
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(lines) { line in
-                        Text(line.text)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(color(line))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                            .id(line.id)
+                VStack(alignment: .leading, spacing: 0) {
+                    if lines.count > shown.count {
+                        Text("Showing the last \(shown.count) of \(lines.count) lines. Copy All copies every line.")
+                            .font(.caption).foregroundStyle(.secondary).padding(.bottom, 6)
                     }
+                    Text(attributed(shown))
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineSpacing(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                    Color.clear.frame(height: 1).id("end")
                 }
                 .padding(10)
+                .padding(.top, 18)
             }
             .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.45)))
             .overlay {
                 if lines.isEmpty { Text("No output yet").foregroundStyle(.secondary) }
             }
+            .overlay(alignment: .topTrailing) {
+                if !lines.isEmpty {
+                    Button { copyAll() } label: {
+                        Label(copied ? "Copied" : "Copy All", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(.caption.bold())
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Capsule().fill(Color.black.opacity(0.6)))
+                    .padding(8)
+                    .help("Copy the whole output to the clipboard")
+                }
+            }
             .onChange(of: lines.last?.id) { _, newID in
-                if let newID { proxy.scrollTo(newID, anchor: .bottom) }
+                if newID != nil { proxy.scrollTo("end", anchor: .bottom) }
             }
         }
+    }
+
+    func attributed(_ shown: ArraySlice<LogLine>) -> AttributedString {
+        var out = AttributedString()
+        for (i, line) in shown.enumerated() {
+            var part = AttributedString(i == shown.count - 1 ? line.text : line.text + "\n")
+            part.foregroundColor = color(line)
+            out += part
+        }
+        return out
+    }
+
+    func copyAll() {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(lines.map(\.text).joined(separator: "\n"), forType: .string)
+        copied = true
+        Task { try? await Task.sleep(nanoseconds: 1_500_000_000); copied = false }
     }
 
     func color(_ line: LogLine) -> Color {

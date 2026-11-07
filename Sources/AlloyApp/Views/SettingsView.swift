@@ -39,7 +39,7 @@ struct SettingsView: View {
                 }
                 Panel("Playing") {
                     Toggle("Show or hide game metrics with \(MetricsHotKey.display)", isOn: $draft.metricsShortcut)
-                    Text("Metrics (FPS, frame time, memory) start hidden. While a game runs, \(MetricsHotKey.display) works even when the game is in front. With this off, games start without the metrics overlay loaded.")
+                    Text("Metrics (FPS, frame time, memory, and the rendering and scaled resolution) start hidden. While a game runs, \(MetricsHotKey.display) works even when the game is in front. With this off, games start without the metrics overlay loaded.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Panel("Updates") {

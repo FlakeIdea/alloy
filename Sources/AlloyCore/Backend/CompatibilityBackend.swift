@@ -69,6 +69,7 @@ public protocol CompatibilityBackend: Sendable {
     func discoverRuntimes() -> [WineRuntime]
     func capabilities(of runtime: WineRuntime) -> BackendCapabilities
     func initializePrefixCommand(prefix: WinePrefix, runtime: WineRuntime) throws -> LaunchCommand
+    func updatePrefixCommand(prefix: WinePrefix, runtime: WineRuntime) throws -> LaunchCommand
     func stopPrefixCommand(prefix: WinePrefix, runtime: WineRuntime) -> LaunchCommand
     func launchCommand(for game: Game, prefix: WinePrefix, runtime: WineRuntime, options: LaunchOptions) throws -> LaunchCommand
 }

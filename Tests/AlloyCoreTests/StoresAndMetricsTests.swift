@@ -129,6 +129,10 @@ import Testing
         #expect(shortcut.environment["MTL_HUD_ENABLED"] == "1")
         // Loaded only for the shortcut, it starts hidden in every process, so one press shows it in all of them.
         #expect(shortcut.environment["MTL_HUD_HIDDEN"] == "1")
+        // The Retina scale under the resolution line; the MetalFX section shows the render and scaled resolution.
+        #expect(shortcut.environment["MTL_HUD_EXTRA_ELEMENTS"] == "layerscale")
+        // XNA games on Wine Mono's FNA draw through Direct3D 11 rather than SDL_GPU on Vulkan.
+        #expect(plain.environment["FNA3D_FORCE_DRIVER"] == "D3D11")
         var shown = game; shown.graphics.metalHUD = true
         let atStart = try backend.launchCommand(for: shown, prefix: prefix, runtime: runtime, options: LaunchOptions(loadMetricsHUD: true))
         #expect(atStart.environment["MTL_HUD_ENABLED"] == "1" && atStart.environment["MTL_HUD_HIDDEN"] == nil)
