@@ -1,0 +1,152 @@
+Alloy: winemac.drv: scroll like a Windows mouse wheel while a game holds the cursor.
+
+In games, a small flick of the wheel did several wheel steps, resting a finger on a Magic Mouse or trackpad
+scrolled, a swipe kept scrolling after the finger lifted, and scrolling made the camera jump. Many games (Unreal
+Engine ones, for example) treat every WM_MOUSEWHEEL as one step, whatever its size.
+
+On Windows a wheel click is one WHEEL_DELTA (120) message and never moves the cursor. On the Mac:
+- macOS smooths each wheel click into a burst of up to about 20 scroll events, all with the click's timestamp and no
+  gesture phase, and Wine sent each one as a wheel message;
+- every small movement of a finger on a trackpad or Magic Mouse, and every momentum (inertia) event after a swipe,
+  became a wheel message;
+- each one was sent with MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE to where the Mac cursor is. In mouse-look the Mac
+  cursor isn't where the game keeps the Windows one, so that move turned the camera.
+
+While a game holds the cursor (it is clipped with ClipCursor or the game hid it), the driver now:
+- sends one WHEEL_DELTA per wheel click, counting each burst once;
+- for trackpad and Magic Mouse gestures, sends one WHEEL_DELTA per 20 points of swipe, keeps the remainder for the
+  next event, and starts over when a touch begins or ends or the direction reverses, so a touch alone does nothing;
+- ignores momentum events, as Windows has no scroll inertia;
+- sends the wheel without moving the cursor, and keeps the next mouse move relative.
+Other windows (launchers, Steam, apps) keep Wine's smooth, precise scrolling.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winemac.drv/cocoa_app.h
++++ b/dlls/winemac.drv/cocoa_app.h
+@@ -69,6 +69,8 @@
+ 
+     NSTimeInterval lastScrollTime;
+     double accumScrollX, accumScrollY;
++    double gameScrollX, gameScrollY;
++    NSTimeInterval lastGameWheelTime;
+ 
+     NSMutableDictionary* originalDisplayModes;
+     NSMutableDictionary* latentDisplayModes;
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -1806,6 +1806,35 @@
+                 process = NSMouseInRect(nspoint, contentRect, NO);
+             }
+ 
++            /* Alloy: while a game holds the cursor (clipped or hidden, as in mouse-look), scrolling behaves like a
++               Windows mouse wheel: one WHEEL_DELTA per wheel click, no inertia after a trackpad or Magic Mouse
++               swipe, nothing for a finger resting on them, and the cursor stays where the game put it. */
++            BOOL game = self.clippingCursor || clientWantsCursorHidden;
++            BOOL gesture = [theEvent phase] != NSEventPhaseNone || [theEvent momentumPhase] != NSEventPhaseNone;
++            int gameWheelX = 0, gameWheelY = 0;
++
++            if (process && game)
++            {
++                if ([theEvent momentumPhase] != NSEventPhaseNone)
++                    process = FALSE;
++                else if (gesture)
++                {
++                    if ([theEvent phase] & (NSEventPhaseMayBegin | NSEventPhaseBegan | NSEventPhaseEnded | NSEventPhaseCancelled))
++                        gameScrollX = gameScrollY = 0;
++                }
++                else
++                {
++                    /* A mouse wheel. macOS smooths each click (or each accelerated group of clicks) into a burst
++                       of up to about 20 events, all with the click's timestamp; only the first one counts. */
++                    gameWheelX = [theEvent deltaX] < 0 ? 120 : [theEvent deltaX] > 0 ? -120 : 0;
++                    gameWheelY = [theEvent deltaY] > 0 ? 120 : [theEvent deltaY] < 0 ? -120 : 0;
++                    if ((!gameWheelX && !gameWheelY) || [theEvent timestamp] == lastGameWheelTime)
++                        process = FALSE;
++                    else
++                        lastGameWheelTime = [theEvent timestamp];
++                }
++            }
++
+             if (process)
+             {
+                 macdrv_event* event;
+@@ -1857,8 +1886,30 @@
+                 x *= 6;
+                 y *= 6;
+ 
+-                if (use_precise_scrolling)
++                if (game)
+                 {
++                    event->mouse_scroll.keep_cursor = 1;
++                    if (!gesture)
++                    {
++                        event->mouse_scroll.x_scroll = gameWheelX;
++                        event->mouse_scroll.y_scroll = gameWheelY;
++                    }
++                    else
++                    {
++                        /* A trackpad or Magic Mouse swipe gives one WHEEL_DELTA per 20 points, so resting or
++                           brushing a finger on it doesn't scroll. Reversing direction starts over. */
++                        if ((gameScrollX < 0 && x > 0) || (gameScrollX > 0 && x < 0)) gameScrollX = 0;
++                        if ((gameScrollY < 0 && y > 0) || (gameScrollY > 0 && y < 0)) gameScrollY = 0;
++                        gameScrollX += x;
++                        gameScrollY += y;
++                        event->mouse_scroll.x_scroll = 120 * (int)trunc(gameScrollX / 120);
++                        event->mouse_scroll.y_scroll = 120 * (int)trunc(gameScrollY / 120);
++                        gameScrollX -= event->mouse_scroll.x_scroll;
++                        gameScrollY -= event->mouse_scroll.y_scroll;
++                    }
++                }
++                else if (use_precise_scrolling)
++                {
+                     event->mouse_scroll.x_scroll = x;
+                     event->mouse_scroll.y_scroll = y;
+ 
+@@ -1927,7 +1978,9 @@
+                 // Since scroll wheel events deliver absolute cursor position, the
+                 // accumulating delta from move events is invalidated.  Make sure next
+                 // mouse move event starts over from an absolute baseline.
+-                forceNextMouseMoveAbsolute = TRUE;
++                // Alloy: in a game the scroll doesn't move the cursor, so mouse movement stays relative.
++                if (!game)
++                    forceNextMouseMoveAbsolute = TRUE;
+             }
+         }
+     }
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -401,6 +401,7 @@
+             int             x;
+             int             y;
+             unsigned long   time_ms;
++            int             keep_cursor;
+         }                                           mouse_scroll;
+         struct {
+             struct macdrv_query *query;
+--- a/dlls/winemac.drv/mouse.c
++++ b/dlls/winemac.drv/mouse.c
+@@ -925,17 +925,21 @@
+  */
+ void macdrv_mouse_scroll(HWND hwnd, const macdrv_event *event)
+ {
++    /* Alloy: a Windows mouse wheel never moves the cursor. While a game holds the cursor, the Mac cursor isn't
++       where the game put it, so moving it there with the scroll made the camera jump. */
++    UINT move = event->mouse_scroll.keep_cursor ? 0 : MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
++
+     TRACE("win %p/%p scroll (%d,%d) at (%d,%d) time %lu (%lu ticks ago)\n", hwnd,
+           event->window, event->mouse_scroll.x_scroll, event->mouse_scroll.y_scroll,
+           event->mouse_scroll.x, event->mouse_scroll.y,
+           event->mouse_scroll.time_ms, (NtGetTickCount() - event->mouse_scroll.time_ms));
+ 
+     if (event->mouse_scroll.y_scroll)
+-        send_mouse_input(hwnd, event->window, MOUSEEVENTF_WHEEL | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
++        send_mouse_input(hwnd, event->window, MOUSEEVENTF_WHEEL | move,
+                          event->mouse_scroll.x, event->mouse_scroll.y,
+                          event->mouse_scroll.y_scroll, FALSE, event->mouse_scroll.time_ms);
+     if (event->mouse_scroll.x_scroll)
+-        send_mouse_input(hwnd, event->window, MOUSEEVENTF_HWHEEL | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
++        send_mouse_input(hwnd, event->window, MOUSEEVENTF_HWHEEL | move,
+                          event->mouse_scroll.x, event->mouse_scroll.y,
+                          event->mouse_scroll.x_scroll, FALSE, event->mouse_scroll.time_ms);
+ }

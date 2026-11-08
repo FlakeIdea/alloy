@@ -382,6 +382,32 @@ crashed right after `vkCreateBuffer(): Only external memory handle type … MTLB
 built with Wine Mono's compiler: SDL_GPU/Vulkan, D3D11 and OpenGL all drew 240 frames on an M4; D3D11 started in 2.4 s
 against 10.8 s for the default. Terraria itself has not been tested.
 
+## Mouse wheel, trackpad and Magic Mouse in games (Poppy Playtime, reported 2026-11-09)
+
+Reported: in Poppy Playtime a small flick of the wheel switched hands twice (on Windows it takes a firm flick),
+touching a Magic Mouse switched hands, and scrolling made the camera jump. Many games, Unreal Engine ones among them,
+treat every `WM_MOUSEWHEEL` as one step whatever its size, so what matters is how many wheel messages arrive.
+
+Measured with a test program that logs wheel messages, raw input and the cursor, fed with scroll events posted to its
+process (a wheel click, a quick three-click flick, a resting finger, a 70-point swipe with inertia, a reversal, a
+sideways swipe). On engine package -3:
+- macOS smooths each wheel click into a burst of about 20 scroll events (all with the click's timestamp, marked
+  continuous, no gesture phase), and Wine sent each as a wheel message: 20 messages for one click, 30 for the flick;
+- each small movement of a resting finger became a wheel message, and so did every inertia event after a swipe
+  (about 30 more after the swipe stopped);
+- every wheel message moved the Windows cursor to the Mac cursor's position, which turns the camera in mouse-look.
+
+`patches/wine/0008` changes this while a game holds the cursor (clipped or hidden): one 120 step per wheel click,
+one per 20 points of trackpad or Magic Mouse swipe, nothing for a resting finger, inertia ignored, and no cursor move.
+After it, the same test gave 1 step for a click, 3 for the flick, 0 for the resting finger, 3 for the swipe with
+nothing from its inertia, +1 −1 for the reversal and 1 sideways step, and the wheel's position stayed where the
+game's cursor was. Windows that don't hide or clip the cursor (launchers, Steam) scroll smoothly as before: same
+results as package -3. Shipped in engine package `dxmt-0.80-cx26.3-4`.
+
+Not yet tested in a game or with a real mouse, trackpad and Magic Mouse: the events were synthetic, built from what
+macOS delivers. Check it in Poppy Playtime: one wheel click should switch hands once, and touching the Magic Mouse
+should do nothing.
+
 ## Input delay (Brawlhalla, reported)
 
 Brawlhalla itself hasn't been tested. DXMT 0.80 lets a game queue up to three frames ahead of the GPU
