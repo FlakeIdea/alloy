@@ -237,6 +237,44 @@ import Testing
         #expect(warning.contains { $0.title == "MetalFX upscaling is not active" })
     }
 
+    /// The scroll speed reaches the engine only when its Mac driver reads it, and only when it isn't the standard 1×.
+    @Test func scrollSpeedNeedsTheEngineOption() throws {
+        let dir = TempDir()
+        var game = makeGame(in: dir)
+        let prefix = makeInitializedPrefix(in: dir)
+        let unix = "Wine Devel.app/Contents/Resources/wine/lib/wine/x86_64-unix/"
+        #expect(game.scrollSpeedPercent == 100)
+
+        dir.write(unix + "winemac.so", Data("....use_precise_scrolling....".utf8))
+        var runtime = makeFakeRuntime(in: dir, moltenVK: true, d3dMetal: true)
+        #expect(!runtime.hasScrollSpeedOption && !backend.capabilities(of: runtime).scrollSpeed)
+        game.scrollSpeedPercent = 200
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: LaunchOptions()).environment["ALLOY_SCROLL_SPEED_PERCENT"] == nil)
+
+        dir.write(unix + "winemac.so", Data("....ALLOY_SCROLL_SPEED_PERCENT....".utf8))
+        runtime = makeFakeRuntime(in: dir, moltenVK: true, d3dMetal: true)
+        #expect(runtime.hasScrollSpeedOption && backend.capabilities(of: runtime).scrollSpeed)
+        let speed = { try self.backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: LaunchOptions()).environment["ALLOY_SCROLL_SPEED_PERCENT"] }
+        #expect(try speed() == "200")
+        game.scrollSpeedPercent = 100
+        #expect(try speed() == nil)
+        game.scrollSpeedPercent = 5000
+        #expect(try speed() == nil)
+        // A game's own variable wins, as for every other variable.
+        game.scrollSpeedPercent = 150
+        game.environment = ["ALLOY_SCROLL_SPEED_PERCENT": "300"]
+        #expect(try speed() == "300")
+
+        // Saved games from before the setting load at 1×; the setting survives a save.
+        var saved = makeGame(in: dir); saved.scrollSpeedPercent = 75
+        let json = try JSONEncoder().encode(saved)
+        #expect(try JSONDecoder().decode(Game.self, from: json).scrollSpeedPercent == 75)
+        var old = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+        old.removeValue(forKey: "scrollSpeedPercent")
+        #expect(try JSONDecoder().decode(Game.self, from: JSONSerialization.data(withJSONObject: old)).scrollSpeedPercent == 100)
+        #expect(ScrollSpeed.label(150) == "1.5×" && ScrollSpeed.label(200) == "2×" && ScrollSpeed.label(75) == "0.75×")
+    }
+
     /// Low input delay is on by default, but only on a DXMT whose d3d11 reads dxgi.maxFrameLatency.
     @Test func lowInputDelayNeedsTheEngineOption() throws {
         let dir = TempDir()

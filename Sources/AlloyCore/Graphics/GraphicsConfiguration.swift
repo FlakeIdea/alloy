@@ -231,6 +231,8 @@ public struct BackendCapabilities: Equatable, Sendable {
     public var metalFXSpatialUpscaling: Set<GraphicsBackendKind> = []
     /// Graphics paths that can limit the game to one queued frame (`LowInputDelay`).
     public var lowInputDelay: Set<GraphicsBackendKind> = []
+    /// The engine takes a per-game scroll speed (`ScrollSpeed`).
+    public var scrollSpeed = false
 
     public func status(of backend: GraphicsBackendKind) -> CapabilityStatus {
         graphics[backend] ?? .unavailable("Not supported by this runtime.")

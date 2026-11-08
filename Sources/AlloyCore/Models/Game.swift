@@ -25,6 +25,9 @@ public struct Game: Codable, Identifiable, Hashable, Sendable {
     public var isApp = false
     /// DLLs the person added to this game's environment; Wine loads them before its own.
     public var customDLLs: [CustomDLL] = []
+    /// How far scrolling goes while the game holds the mouse, in percent (`ScrollSpeed`). 100 is one wheel step per
+    /// wheel click, like Windows.
+    public var scrollSpeedPercent = ScrollSpeed.standard
 
     public init(id: UUID = UUID(),
                 name: String,
@@ -71,6 +74,7 @@ public struct Game: Codable, Identifiable, Hashable, Sendable {
         declinedFrameGeneration = try c.decodeIfPresent(Bool.self, forKey: .declinedFrameGeneration) ?? false
         isApp = try c.decodeIfPresent(Bool.self, forKey: .isApp) ?? false
         customDLLs = try c.decodeIfPresent([CustomDLL].self, forKey: .customDLLs) ?? []
+        scrollSpeedPercent = try c.decodeIfPresent(Int.self, forKey: .scrollSpeedPercent) ?? ScrollSpeed.standard
     }
 
     public var executableURL: URL {

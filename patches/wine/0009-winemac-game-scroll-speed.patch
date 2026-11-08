@@ -1,0 +1,172 @@
+Alloy: winemac.drv: a scroll speed for games.
+
+Patch 0008 makes scrolling in games work like a Windows mouse wheel: one WHEEL_DELTA per wheel click and per 20
+points of trackpad or Magic Mouse swipe. That is right for games where a wheel step is an action (switching items),
+but scrolling lists or zooming can feel slow next to macOS's accelerated scrolling. Alloy now offers a per-game scroll
+speed and passes it in ALLOY_SCROLL_SPEED_PERCENT (25 to 800; 100, the default, is unchanged from 0008). It is a whole
+number so no decimal separator can be misread.
+
+While a game holds the cursor:
+- a wheel click gives speed/100 steps; the fraction carries to the next click in the same direction and starts at a
+  half, so it rounds to the nearest step (at 50% the first click scrolls, then every second one; at 250% clicks give
+  3, 2, 3, ... steps);
+- a trackpad or Magic Mouse swipe goes speed/100 times as far (one step per 20 points at 100%);
+- each step is sent as its own WHEEL_DELTA message, as a Windows mouse does for each click. (Wine's server still
+  merges wheel messages the game hasn't read yet into one, with the total delta; raw input keeps them apart.)
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winemac.drv/cocoa_app.h
++++ b/dlls/winemac.drv/cocoa_app.h
+@@ -71,6 +71,8 @@
+     double accumScrollX, accumScrollY;
+     double gameScrollX, gameScrollY;
+     NSTimeInterval lastGameWheelTime;
++    double gameWheelAccX, gameWheelAccY;
++    int gameWheelDirX, gameWheelDirY;
+ 
+     NSMutableDictionary* originalDisplayModes;
+     NSMutableDictionary* latentDisplayModes;
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -127,6 +127,21 @@
+ @end
+ 
+ 
++/* Alloy: wheel steps for one wheel click at the game's scroll speed. The fraction carries over to the next click
++   in the same direction; starting at a half rounds to the nearest step, so at 50% the first click scrolls. */
++static int game_wheel_steps(double *acc, int *last_dir, int dir, BOOL restart)
++{
++    int steps;
++
++    if (!dir) return 0;
++    if (restart || dir != *last_dir) *acc = 0.5;
++    *last_dir = dir;
++    *acc += game_scroll_speed_percent / 100.0;
++    steps = (int)floor(*acc);
++    *acc -= steps;
++    return steps * dir * 120;
++}
++
+ @implementation WineApplicationController
+ 
+     @synthesize keyboardType, lastFlagsChanged;
+@@ -1826,12 +1841,21 @@
+                 {
+                     /* A mouse wheel. macOS smooths each click (or each accelerated group of clicks) into a burst
+                        of up to about 20 events, all with the click's timestamp; only the first one counts. */
+-                    gameWheelX = [theEvent deltaX] < 0 ? 120 : [theEvent deltaX] > 0 ? -120 : 0;
+-                    gameWheelY = [theEvent deltaY] > 0 ? 120 : [theEvent deltaY] < 0 ? -120 : 0;
+-                    if ((!gameWheelX && !gameWheelY) || [theEvent timestamp] == lastGameWheelTime)
++                    int dirX = [theEvent deltaX] < 0 ? 1 : [theEvent deltaX] > 0 ? -1 : 0;
++                    int dirY = [theEvent deltaY] > 0 ? 1 : [theEvent deltaY] < 0 ? -1 : 0;
++
++                    if ((!dirX && !dirY) || [theEvent timestamp] == lastGameWheelTime)
+                         process = FALSE;
+                     else
++                    {
++                        BOOL restart = [theEvent timestamp] - lastGameWheelTime > 1;
++
+                         lastGameWheelTime = [theEvent timestamp];
++                        gameWheelX = game_wheel_steps(&gameWheelAccX, &gameWheelDirX, dirX, restart);
++                        gameWheelY = game_wheel_steps(&gameWheelAccY, &gameWheelDirY, dirY, restart);
++                        if (!gameWheelX && !gameWheelY)
++                            process = FALSE;
++                    }
+                 }
+             }
+ 
+@@ -1896,12 +1920,12 @@
+                     }
+                     else
+                     {
+-                        /* A trackpad or Magic Mouse swipe gives one WHEEL_DELTA per 20 points, so resting or
++                        /* A trackpad or Magic Mouse swipe gives one WHEEL_DELTA per 20 points (at 100%), so resting or
+                            brushing a finger on it doesn't scroll. Reversing direction starts over. */
+                         if ((gameScrollX < 0 && x > 0) || (gameScrollX > 0 && x < 0)) gameScrollX = 0;
+                         if ((gameScrollY < 0 && y > 0) || (gameScrollY > 0 && y < 0)) gameScrollY = 0;
+-                        gameScrollX += x;
+-                        gameScrollY += y;
++                        gameScrollX += x * game_scroll_speed_percent / 100.0;
++                        gameScrollY += y * game_scroll_speed_percent / 100.0;
+                         event->mouse_scroll.x_scroll = 120 * (int)trunc(gameScrollX / 120);
+                         event->mouse_scroll.y_scroll = 120 * (int)trunc(gameScrollY / 120);
+                         gameScrollX -= event->mouse_scroll.x_scroll;
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -141,6 +141,7 @@
+ extern bool use_confinement_cursor_clipping;
+ extern bool cursor_clipping_locks_windows;
+ extern bool use_precise_scrolling;
++extern int game_scroll_speed_percent;
+ extern int gl_surface_mode;
+ extern CFDictionaryRef localized_strings;
+ extern bool retina_enabled;  /* Whether Retina mode is enabled via registry setting. */
+--- a/dlls/winemac.drv/macdrv_main.c
++++ b/dlls/winemac.drv/macdrv_main.c
+@@ -26,6 +26,8 @@
+ 
+ #include "config.h"
+ 
++#include <stdlib.h>
++
+ #include <Security/AuthSession.h>
+ #include <IOKit/pwr_mgt/IOPMLib.h>
+ 
+@@ -57,6 +59,7 @@
+ bool use_confinement_cursor_clipping = true;
+ bool cursor_clipping_locks_windows = true;
+ bool use_precise_scrolling = true;
++int game_scroll_speed_percent = 100;
+ int gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
+ bool retina_enabled = false;
+ bool enable_app_nap = false;
+@@ -395,6 +398,14 @@
+         retina_enabled = IS_OPTION_TRUE(buffer[0]);
+ 
+     retina_on = retina_enabled;
++
++    /* Alloy: how far scrolling goes while a game holds the cursor (see cocoa_app.m), as a percentage: 100 is one
++       wheel step per wheel click. Set per game by Alloy. A whole number, so no decimal separator to misread. */
++    {
++        const char *percent_text = getenv("ALLOY_SCROLL_SPEED_PERCENT");
++        long percent = percent_text ? strtol(percent_text, NULL, 10) : 0;
++        if (percent >= 25 && percent <= 800) game_scroll_speed_percent = percent;
++    }
+ 
+     if (appkey) NtClose(appkey);
+     if (hkey) NtClose(hkey);
+--- a/dlls/winemac.drv/mouse.c
++++ b/dlls/winemac.drv/mouse.c
+@@ -923,6 +923,17 @@
+  *
+  * Handler for MOUSE_SCROLL events.
+  */
++/* Alloy: one message per WHEEL_DELTA, as a Windows mouse sends for each click: many games count the messages,
++   not their size. */
++static void send_wheel_steps(HWND hwnd, const macdrv_event *event, UINT flags, int amount)
++{
++    int step = amount > 0 ? 120 : -120, count = min(abs(amount) / 120, 16);
++
++    while (count--)
++        send_mouse_input(hwnd, event->window, flags, event->mouse_scroll.x, event->mouse_scroll.y, step, FALSE,
++                         event->mouse_scroll.time_ms);
++}
++
+ void macdrv_mouse_scroll(HWND hwnd, const macdrv_event *event)
+ {
+     /* Alloy: a Windows mouse wheel never moves the cursor. While a game holds the cursor, the Mac cursor isn't
+@@ -933,6 +944,13 @@
+           event->window, event->mouse_scroll.x_scroll, event->mouse_scroll.y_scroll,
+           event->mouse_scroll.x, event->mouse_scroll.y,
+           event->mouse_scroll.time_ms, (NtGetTickCount() - event->mouse_scroll.time_ms));
++
++    if (event->mouse_scroll.keep_cursor)
++    {
++        send_wheel_steps(hwnd, event, MOUSEEVENTF_WHEEL, event->mouse_scroll.y_scroll);
++        send_wheel_steps(hwnd, event, MOUSEEVENTF_HWHEEL, event->mouse_scroll.x_scroll);
++        return;
++    }
+ 
+     if (event->mouse_scroll.y_scroll)
+         send_mouse_input(hwnd, event->window, MOUSEEVENTF_WHEEL | move,

@@ -408,6 +408,21 @@ Not yet tested in a game or with a real mouse, trackpad and Magic Mouse: the eve
 macOS delivers. Check it in Poppy Playtime: one wheel click should switch hands once, and touching the Magic Mouse
 should do nothing.
 
+### Scroll speed (added 2026-11-09)
+
+Reported after engine -4: scrolling felt too slow. One step per wheel click is what Windows does, but macOS had been
+sending 6 to 9 steps per click, so lists and zooming in games now move far less than before. Each game's page has a
+**Scroll speed** setting (Scrolling, above Advanced settings): 0.5× to 4×, default 1× (like Windows). Alloy passes it
+as `ALLOY_SCROLL_SPEED_PERCENT` and engine package `dxmt-0.80-cx26.3-5` reads it (`patches/wine/0009`): a wheel click
+gives that many steps, the fraction carried to the next click (at 1.5× clicks give 2, 1, 2, …), and a trackpad or
+Magic Mouse swipe goes that much further. It changes nothing in windows that don't hold the mouse. Older engines don't
+read it, so the setting is greyed out on them.
+
+Measured with the same synthetic test: at 50% one click 1 step, three clicks 2 steps, the 70-point swipe 1 step and
+the small reversal and sideways swipe nothing; at 250% three clicks 3 + 2 + 3 steps, the swipe 8, the reversal +4 −4
+and the sideways swipe 3. Each step is sent as its own 120 message; Wine's server merges wheel messages a game hasn't
+read yet into one with the total (360 for three steps), and raw input keeps them apart.
+
 ## Input delay (Brawlhalla, reported)
 
 Brawlhalla itself hasn't been tested. DXMT 0.80 lets a game queue up to three frames ahead of the GPU

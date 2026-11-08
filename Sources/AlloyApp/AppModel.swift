@@ -660,6 +660,13 @@ final class AppModel: ObservableObject {
     }
 
     /// MetalFX scaling: games that support DLSS get Apple MetalFX upscaling instead (DLSS → MetalFX).
+    func setScrollSpeed(_ percent: Int, for game: Game) {
+        guard ScrollSpeed.range.contains(percent), percent != game.scrollSpeedPercent else { return }
+        var g = game
+        g.scrollSpeedPercent = percent
+        save(g)
+    }
+
     func setMetalFXScaling(_ on: Bool, for game: Game) {
         var g = game
         g.graphics.dlss = on

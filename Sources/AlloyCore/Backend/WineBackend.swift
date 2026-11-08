@@ -105,6 +105,8 @@ public struct WineBackend: CompatibilityBackend {
         // The frame-latency option is read from DXMT's own d3d11 (about 4 MB), not assumed from the engine's version.
         let hasLatency = hasDXMT && ((try? Data(contentsOf: win.appendingPathComponent("d3d11.dll"), options: .alwaysMapped))?
             .range(of: Data(LowInputDelay.configKey.utf8)) != nil)
+        // The scroll speed is read from the Mac driver's own code, not assumed from the engine's version.
+        let winemac = (try? Data(contentsOf: wineLib.appendingPathComponent("x86_64-unix/winemac.so"), options: .alwaysMapped)) ?? Data()
         // bcrypt names libgnutls only when Wine was configured with it.
         let bcrypt = (try? Data(contentsOf: wineLib.appendingPathComponent("x86_64-unix/bcrypt.so"), options: .alwaysMapped)) ?? Data()
         return WineRuntime(kind: kind, wineBinary: binary, root: root, version: versionProbe(binary),
@@ -118,7 +120,8 @@ public struct WineBackend: CompatibilityBackend {
                                && fileManager.fileExists(atPath: VideoPlayback.pluginFolder(root: root).path),
                            // The bundle's Info.plist is written by ntdll, so the games category is in its strings.
                            hasGameModeBundles: ntdll.range(of: Data("public.app-category.games".utf8)) != nil,
-                           hasFrameLatencyOption: hasLatency)
+                           hasFrameLatencyOption: hasLatency,
+                           hasScrollSpeedOption: winemac.range(of: Data(ScrollSpeed.variable.utf8)) != nil)
     }
 
     static func kind(forAppName name: String) -> RuntimeKind {
@@ -208,7 +211,8 @@ public struct WineBackend: CompatibilityBackend {
                                    supportsAVXAdvertisement: runtime.requiresRosetta, notes: notes,
                                    metalFXUpscaling: upscaling, metalFXFrameGeneration: frameGeneration,
                                    metalFXSpatialUpscaling: runtime.hasDXMT ? [.dxmt] : [],
-                                   lowInputDelay: runtime.hasDXMT && runtime.hasFrameLatencyOption ? [.dxmt] : [])
+                                   lowInputDelay: runtime.hasDXMT && runtime.hasFrameLatencyOption ? [.dxmt] : [],
+                                   scrollSpeed: runtime.hasScrollSpeedOption)
     }
 
     // MARK: Commands
@@ -332,6 +336,9 @@ public struct WineBackend: CompatibilityBackend {
             dxmtConfig.append("\(LowInputDelay.configKey)=\(LowInputDelay.frames)")
         }
         if !dxmtConfig.isEmpty { env["DXMT_CONFIG"] = dxmtConfig.joined(separator: ";") }
+        if caps.scrollSpeed && game.scrollSpeedPercent != ScrollSpeed.standard && ScrollSpeed.range.contains(game.scrollSpeedPercent) {
+            env[ScrollSpeed.variable] = String(game.scrollSpeedPercent)
+        }
         if runtime.hasGStreamer { env.merge(VideoPlayback.environment(for: runtime)) { _, new in new } }
         // Shown from the start when the game asks for it; otherwise loaded for the shortcut and hidden as it appears.
         // Loaded for the metrics shortcut, the HUD starts hidden; it starts shown when the game is set to show it.
@@ -381,6 +388,24 @@ public struct WineBackend: CompatibilityBackend {
 public enum FNA {
     public static let driverKey = "FNA3D_FORCE_DRIVER"
     public static let driver = "D3D11"
+}
+
+/// Scrolling while a game holds the mouse (hidden or confined, as in mouse-look). The engine's Mac driver then scrolls
+/// like a Windows mouse (patches/wine/0008): one wheel step per wheel click and per 20 points of trackpad or Magic Mouse
+/// swipe, no inertia, no cursor move. The speed scales that (patches/wine/0009): at 200% a click is two steps.
+public enum ScrollSpeed {
+    public static let variable = "ALLOY_SCROLL_SPEED_PERCENT"
+    /// One step per wheel click, like Windows. Right for games where a step is an action, such as switching items.
+    public static let standard = 100
+    public static let range = 25...800
+    /// The speeds the game page offers.
+    public static let choices = [50, 75, 100, 150, 200, 300, 400]
+    public static func label(_ percent: Int) -> String {
+        let value = Double(percent) / 100
+        let number = value == value.rounded() ? String(Int(value)) : String(format: "%g", value)
+        return number + "×"
+    }
+    public static let help = "How far a wheel click or a trackpad or Magic Mouse swipe scrolls while the game holds the mouse. At 1× each wheel click is one step, like on Windows, which games use for things like switching items. Raise it if scrolling lists or zooming feels slow."
 }
 
 /// Low input delay: the game may queue only one frame ahead of the GPU instead of three (DXMT's default), so what the

@@ -59,6 +59,7 @@ struct GameDetailView: View {
                     DirectX12Note()
                 }
                 GraphicsCard(game: game)
+                ScrollingCard(game: game)
 
                 Disclosure(title: "Advanced settings", isExpanded: $showAdvanced) {
                     VStack(spacing: 18) {
@@ -430,6 +431,37 @@ struct GraphicsCard: View {
                     .font(.caption).foregroundStyle(.tertiary)
             } else {
                 Text("Install the game engine from Setup to choose graphics settings.").foregroundStyle(Theme.warning)
+            }
+        }
+    }
+}
+
+/// The game's scroll speed, above Advanced settings.
+struct ScrollingCard: View {
+    @EnvironmentObject var model: AppModel
+    let game: Game
+
+    var body: some View {
+        if let caps = model.capabilities(for: game) {
+            Panel("Scrolling") {
+                let choices = ScrollSpeed.choices.contains(game.scrollSpeedPercent) ? ScrollSpeed.choices
+                    : (ScrollSpeed.choices + [game.scrollSpeedPercent]).sorted()
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Scroll speed")
+                        Text(caps.scrollSpeed ? ScrollSpeed.help
+                             : "Needs the newer game engine. When it's installed, this page offers to move the game onto it.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Picker("Scroll speed", selection: Binding(get: { game.scrollSpeedPercent },
+                                                             set: { model.setScrollSpeed($0, for: game) })) {
+                        ForEach(choices, id: \.self) { percent in
+                            Text(percent == ScrollSpeed.standard ? "1× (like Windows)" : ScrollSpeed.label(percent)).tag(percent)
+                        }
+                    }
+                    .labelsHidden().fixedSize().disabled(!caps.scrollSpeed)
+                }
             }
         }
     }
