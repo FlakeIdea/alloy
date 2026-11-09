@@ -101,7 +101,8 @@ case "$mvk" in *" "*) echo "The work folder $work must not contain spaces (set A
 
 echo "Configuring Wine $version (log: $build/configure.log)"
 mkdir -p "$build"
-(cd "$build" && GNUTLS_CFLAGS="-I$deps/include" GNUTLS_LIBS="-L$deps/lib -lgnutls" \
+# 32-bit libraries with SSE2 math, as in scripts/build-wine.sh (x87 math is very slow under Rosetta 2).
+(cd "$build" && i386_CFLAGS="-g -O2 -msse2 -mfpmath=sse" GNUTLS_CFLAGS="-I$deps/include" GNUTLS_LIBS="-L$deps/lib -lgnutls" \
     GSTREAMER_CFLAGS="-I$gst/include/gstreamer-1.0 -I$gst/include/glib-2.0 -I$gst/lib/glib-2.0/include" \
     GSTREAMER_LIBS="-L$gst/lib -lgstvideo-1.0 -lgstaudio-1.0 -lgsttag-1.0 -lgstbase-1.0 -lgstreamer-1.0 -lgobject-2.0 -lglib-2.0" \
     LDFLAGS="-mmacosx-version-min=11.0 -L$mvk -Wl,-rpath,@loader_path/../../ -Wl,-rpath,@loader_path/../../external" \

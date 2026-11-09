@@ -1,0 +1,126 @@
+Alloy: ntdll, wineboot: report the Mac's real processor speed on Apple silicon.
+
+Windows programs read the processor's speed from the registry (~MHz), from CallNtPowerInformation and from WMI.
+On Apple silicon under Rosetta 2 the registry said 999 MHz, because wineboot measures the time stamp counter and
+Rosetta's counts nanoseconds, and the power information said 2400 MHz, because that is what Rosetta returns for
+hw.cpufrequency on every chip. Games that check for a minimum speed warned about a slow processor (BeamNG.drive:
+"Your clock speed is below 2GHz").
+
+ntdll now reads the highest performance state of the cores from the power manager's device tree node
+(4464 MHz on an M4) and falls back to hw.cpufrequency when the node isn't there (Intel Macs). wineboot skips the
+time stamp counter measurement under Rosetta 2, so ~MHz takes the same value from the power information.
+
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -4453,6 +4453,55 @@
+ 
+ #endif
+ 
++#ifdef __APPLE__
++/* The highest clock speed of the processor's cores in MHz on Apple silicon, or 0 if it isn't known.
++ *
++ * Apple silicon has no hw.cpufrequency (under Rosetta 2 it is a fixed 2400 MHz whatever the chip), so Windows
++ * programs saw a speed that has nothing to do with the Mac, and some warn that the processor is too slow. The power
++ * manager's device tree node lists the performance states of the efficiency cores ("voltage-states1-sram") and the
++ * performance cores ("voltage-states5-sram") as pairs of 32-bit numbers, frequency then voltage, with the frequency
++ * in Hz on older chips and kHz on newer ones. */
++static unsigned int apple_silicon_max_mhz(void)
++{
++    static const char * const names[] = { "voltage-states5-sram", "voltage-states1-sram" };
++    static unsigned int cached = ~0u;
++    io_registry_entry_t pmgr;
++    unsigned int i, best = 0;
++
++    if (cached != ~0u) return cached;
++    pmgr = IORegistryEntryFromPath( 0, "IODeviceTree:/arm-io/pmgr" );
++    if (pmgr)
++    {
++        for (i = 0; i < ARRAY_SIZE(names); i++)
++        {
++            CFStringRef name = CFStringCreateWithCString( NULL, names[i], kCFStringEncodingUTF8 );
++            CFTypeRef value = name ? IORegistryEntryCreateCFProperty( pmgr, name, NULL, 0 ) : NULL;
++
++            if (value && CFGetTypeID( value ) == CFDataGetTypeID())
++            {
++                const unsigned char *bytes = CFDataGetBytePtr( value );
++                CFIndex pos, len = CFDataGetLength( value );
++
++                for (pos = 0; pos + 8 <= len; pos += 8)
++                {
++                    unsigned int freq = bytes[pos] | (bytes[pos + 1] << 8) | (bytes[pos + 2] << 16) |
++                                        ((unsigned int)bytes[pos + 3] << 24);
++                    unsigned int mhz = freq >= 100000000 ? freq / 1000000 : freq / 1000;
++
++                    /* anything else is not a clock speed in a unit we know */
++                    if (mhz >= 500 && mhz <= 10000 && mhz > best) best = mhz;
++                }
++            }
++            if (value) CFRelease( value );
++            if (name) CFRelease( name );
++        }
++        IOObjectRelease( pmgr );
++    }
++    cached = best;
++    return best;
++}
++#endif
++
+ /******************************************************************************
+  *              NtPowerInformation  (NTDLL.@)
+  */
+@@ -4592,17 +4641,24 @@
+             unsigned long long currentMhz;
+             unsigned long long maxMhz;
+ 
+-            valSize = sizeof(currentMhz);
+-            if (!sysctlbyname("hw.cpufrequency", &currentMhz, &valSize, NULL, 0))
+-                currentMhz /= 1000000;
++            if ((maxMhz = apple_silicon_max_mhz()))
++            {
++                currentMhz = maxMhz;
++            }
+             else
+-                currentMhz = cannedMHz;
++            {
++                valSize = sizeof(currentMhz);
++                if (!sysctlbyname("hw.cpufrequency", &currentMhz, &valSize, NULL, 0))
++                    currentMhz /= 1000000;
++                else
++                    currentMhz = cannedMHz;
+ 
+-            valSize = sizeof(maxMhz);
+-            if (!sysctlbyname("hw.cpufrequency_max", &maxMhz, &valSize, NULL, 0))
+-                maxMhz /= 1000000;
+-            else
+-                maxMhz = currentMhz;
++                valSize = sizeof(maxMhz);
++                if (!sysctlbyname("hw.cpufrequency_max", &maxMhz, &valSize, NULL, 0))
++                    maxMhz /= 1000000;
++                else
++                    maxMhz = currentMhz;
++            }
+ 
+             for(i = 0; i < out_cpus; i++) {
+                 cpu_power[i].CurrentMhz = currentMhz;
+--- a/programs/wineboot/wineboot.c
++++ b/programs/wineboot/wineboot.c
+@@ -233,6 +233,19 @@
+         return 0;
+     }
+ 
++    /* Under Apple's Rosetta 2 the time stamp counter counts nanoseconds, so its frequency (1000 MHz) says nothing
++     * about the processor. Returning 0 makes the caller use the speed from the power information instead. */
++    __cpuid( regs, 0x80000000 );
++    if (regs[0] >= 0x80000002)
++    {
++        __cpuid( regs, 0x80000002 );
++        if (!memcmp( regs, "VirtualApple", 12 ))
++        {
++            WARN( "Not computing TSC frequency under Rosetta 2.\n" );
++            return 0;
++        }
++    }
++
+     __cpuid(regs, 1);
+     if (!(regs[3] & (1 << 4)))
+     {

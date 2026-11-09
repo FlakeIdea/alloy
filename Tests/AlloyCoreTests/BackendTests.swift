@@ -131,6 +131,23 @@ import Testing
         #expect(cmd.environment["ROSETTA_ADVERTISE_AVX"] == nil)
     }
 
+    /// Wine's first process sets what Windows reports about AVX for the whole session, so tools ask for it too.
+    @Test func everyWineProcessAsksRosettaForAVX() throws {
+        let dir = TempDir()
+        var runtime = makeFakeRuntime(in: dir)
+        runtime.architectures = [.x86_64]
+        try #require(runtime.requiresRosetta)   // Apple silicon only
+        let prefix = makeInitializedPrefix(in: dir)
+        #expect(try backend.updatePrefixCommand(prefix: prefix, runtime: runtime).environment["ROSETTA_ADVERTISE_AVX"] == "1")
+        #expect(try backend.wineToolCommand(["reg"], prefix: prefix, runtime: runtime).environment["ROSETTA_ADVERTISE_AVX"] == "1")
+        var game = makeGame(in: dir)
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: LaunchOptions())
+            .environment["ROSETTA_ADVERTISE_AVX"] == "1")
+        game.graphics.advertiseAVX = false
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: LaunchOptions())
+            .environment["ROSETTA_ADVERTISE_AVX"] == nil)
+    }
+
     @Test func unavailableGraphicsBackendIsRefused() {
         let dir = TempDir()
         var game = makeGame(in: dir)

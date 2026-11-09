@@ -66,6 +66,10 @@ codesign --force --sign - "$deps/lib/libMoltenVK.dylib" >/dev/null 2>&1
 echo "Configuring Wine…"
 mkdir -p "$build"
 cd "$build"
+# Wine's 32-bit Windows libraries do their floating-point math with SSE2 instead of x87. Rosetta 2 runs x87 math in
+# software (a 32-bit test ran it 150 to 340 times slower than the same math in SSE), so with the compiler's default
+# every float in 32-bit Direct3D, the C math library and audio mixing paid that price. Proton builds this way too.
+i386_CFLAGS="-g -O2 -msse2 -mfpmath=sse" \
 LDFLAGS="-L$deps/lib -mmacosx-version-min=11.0 -Wl,-rpath,@loader_path/../../ -Wl,-rpath,@loader_path/../../external" \
 FREETYPE_CFLAGS="-I$deps/include/freetype2" FREETYPE_LIBS="-L$deps/lib -lfreetype" \
 "$work/sources/wine/configure" --prefix="$install" --host=x86_64-apple-darwin \

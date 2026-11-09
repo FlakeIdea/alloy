@@ -219,9 +219,20 @@ public struct WineBackend: CompatibilityBackend {
 
     // MARK: Commands
 
-    func baseEnvironment(prefix: WinePrefix, logLevel: LogLevel) -> [String: String] {
-        ["WINEPREFIX": prefix.path.path, "WINEDEBUG": logLevel.wineDebug]
+    /// For every Wine process Alloy starts in the prefix, games and Wine's own tools alike.
+    ///
+    /// The first process of a Wine session fills in what Windows reports about the processor
+    /// (`IsProcessorFeaturePresent`, the enabled extended state) for every program started after it. Under Rosetta 2
+    /// the processor only shows AVX when asked to, so a session begun by `wineboot` or an installer without
+    /// `ROSETTA_ADVERTISE_AVX` told the games that followed "no AVX" through Windows while the processor itself
+    /// reported it. Asking in every process keeps the two the same.
+    func baseEnvironment(prefix: WinePrefix, runtime: WineRuntime, logLevel: LogLevel) -> [String: String] {
+        var env = ["WINEPREFIX": prefix.path.path, "WINEDEBUG": logLevel.wineDebug]
+        if runtime.requiresRosetta { env[Self.advertiseAVXVariable] = "1" }
+        return env
     }
+
+    static let advertiseAVXVariable = "ROSETTA_ADVERTISE_AVX"
 
     public func initializePrefixCommand(prefix: WinePrefix, runtime: WineRuntime) throws -> LaunchCommand {
         try wineboot("--init", prefix: prefix, runtime: runtime)
@@ -236,7 +247,7 @@ public struct WineBackend: CompatibilityBackend {
         guard !prefix.isReadOnly else { throw AlloyError.prefixReadOnly(name: prefix.name) }
         // These runtimes ship without Wine Mono and Gecko. Without the overrides wineboot stops at a download
         // prompt and never finishes (offline it cannot). Install them later only if a program needs .NET or MSHTML.
-        var env = baseEnvironment(prefix: prefix, logLevel: .standard)
+        var env = baseEnvironment(prefix: prefix, runtime: runtime, logLevel: .standard)
         env["WINEDLLOVERRIDES"] = "mscoree,mshtml="
         // Games default to MSync and share this wineserver if they start within seconds; a wineserver started
         // without MSync makes them fail (msync_init: bootstrap_look_up).
@@ -255,7 +266,7 @@ public struct WineBackend: CompatibilityBackend {
         if let created = prefix.runtimeID, created != runtime.id {
             throw AlloyError.prefixRuntimeMismatch(prefix: prefix.name, created: created, requested: runtime.displayName)
         }
-        var env = baseEnvironment(prefix: prefix, logLevel: .standard)
+        var env = baseEnvironment(prefix: prefix, runtime: runtime, logLevel: .standard)
         var notes: [String] = []
         applySync(runtime.hasMSync ? .msync : .off, runtime: runtime, prefix: prefix, to: &env, notes: &notes)
         var command = LaunchCommand(executable: runtime.wineBinary, arguments: arguments, environment: env, waitsForChildProcesses: true)
@@ -298,7 +309,7 @@ public struct WineBackend: CompatibilityBackend {
                 reason: "DXVK DLLs are not installed in \(prefix.name). Install them from the Environments page.")
         }
 
-        var env = baseEnvironment(prefix: prefix, logLevel: options.logLevel)
+        var env = baseEnvironment(prefix: prefix, runtime: runtime, logLevel: options.logLevel)
         var overrides: [String] = []
         // DXMT reads its options from one variable, separated by semicolons.
         var dxmtConfig: [String] = []
@@ -348,7 +359,8 @@ public struct WineBackend: CompatibilityBackend {
         if (g.metalHUD || options.loadMetricsHUD) && caps.supportsMetalHUD { env.merge(MetricsHUD.environment(shown: g.metalHUD)) { $1 } }
         // The game then sees an NVIDIA GPU and offers DLSS; the NGX shim runs MetalFX (MetalFXDLSS sets it up).
         if g.dlss && caps.metalFXUpscaling.contains(g.backend), let key = MetalFXDLSS.environmentKey(for: g.backend) { env[key] = "1" }
-        if g.advertiseAVX && caps.supportsAVXAdvertisement { env["ROSETTA_ADVERTISE_AVX"] = "1" }
+        // On for every Wine process under Rosetta (baseEnvironment); a game with it turned off doesn't see AVX.
+        if !(g.advertiseAVX && caps.supportsAVXAdvertisement) { env[Self.advertiseAVXVariable] = nil }
         // XNA games (Terraria, Stardew Valley…) run on Wine Mono's FNA. Its default SDL_GPU driver uses Vulkan, which
         // on MoltenVK can crash at the first buffer (vkCreateBuffer: external memory); Direct3D 11 goes through the
         // game's Metal graphics instead and starts faster. Other games ignore the variable; a game's own value wins.

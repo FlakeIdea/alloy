@@ -508,3 +508,83 @@ before going on without one.
 
 On first start Alloy asks whether to keep backups on or turn them off; Settings > Game saves changes it later and
 shows the backups in Finder. Checked with unit tests on made-up environments; not yet with a game's real saves.
+
+## What games are told about the Mac, and how much of it they get (measured 2026-11-10)
+
+Test Mac: M4 MacBook Pro (4 performance and 6 efficiency cores, 16 GB), engine package -6 and -7. Programs written
+for these tests. Prompted by BeamNG.drive's menu warnings ("Your clock speed is below 2GHz", "Over 80% of your system
+memory is used up", "Power not connected"); BeamNG itself wasn't run by Alloy's tests.
+
+**Clock speed (fixed in engine package -7).** Windows programs saw 999 MHz in the registry (`~MHz`) and 2400 MHz from
+`CallNtPowerInformation` and WMI: wineboot measures the time stamp counter, which Rosetta 2 runs at 1 GHz, and
+Rosetta answers 2400 MHz for `hw.cpufrequency` on every chip. `patches/wine/0011` reads the cores' highest
+performance state from the power manager's device tree node: all three now say 4464 MHz on the M4. The processor's
+name stays "VirtualApple @ 2.50GHz"; that is Rosetta's own CPUID answer.
+
+**AVX (fixed in Alloy).** With `ROSETTA_ADVERTISE_AVX=1` the processor reports AVX, AVX2, FMA, F16C, BMI1 and BMI2
+(no AVX-512), and Alloy sets it for every game by default. But what Windows itself reports
+(`IsProcessorFeaturePresent`, `GetEnabledXStateFeatures`) is filled in by the first process of a Wine session, and
+Alloy started `wineboot`, installers and Wine's tools without the variable. A game started after one of them, while
+its wineserver was still running, saw AVX in CPUID and "no AVX" from Windows (measured: AVX 0, AVX2 0, extended
+state 0 against 1, 1, 7 in a session begun with the variable). Alloy now sets it for every Wine process on engines
+that run under Rosetta; a game with "Advertise AVX" turned off still doesn't get it.
+
+**Memory: left as it is.** Wine reports available memory as macOS's free plus inactive pages (3.1 GB of 16 GB when
+BeamNG warned). macOS's own "memory free percentage" was 39% at that moment, but that figure counts every page that
+isn't wired or compressed, including memory apps are using, so it isn't what Windows means by available. Counting
+free pages, file cache and purgeable memory instead, as Activity Monitor does, gave a lower number than Wine's in a
+later reading (5.2 against 6.2 GB). Wine's figure is a fair one, and BeamNG's memory warning was about a Mac that
+really had little free memory.
+
+**Power.** `GetSystemPowerStatus` follows the Mac: on battery it says so. A MacBook doesn't slow down on battery
+unless Low Power Mode is on, which Alloy already warns about.
+
+**Processor speed in Wine.** A loop of integer and floating-point work, counted for 4 seconds, as a native arm64
+program, an x86-64 Mac program under Rosetta 2, and a Windows program in Alloy:
+
+| Threads | Native arm64 | Rosetta 2 (Mac program) | Alloy (Windows program) |
+|---|---|---|---|
+| 1 | 6812 /s | 5517 /s | 6408 /s |
+| 4 | 23831 /s | 19131 /s | 20977 /s |
+| 10 | 47822 /s | 41605 /s | 42927 /s |
+
+Windows programs get the same speed as any other Rosetta program on all ten cores (the small lead is the compiler,
+MinGW against Clang), which is 85 to 94% of native speed in this test. Wine takes nothing away, and there is no
+faster way to run x86 code on Apple silicon. All ten cores are reported with the same efficiency class, and macOS,
+not the game, decides which threads run on performance cores.
+
+**Graphics memory.** Through DXMT a game sees "Apple M4" with 6062 MB of dedicated video memory and a budget of
+12124 MB, which is half of, and all of, Metal's recommended working set on this 16 GB Mac. Feature level 11_0.
+
+**Not re-measured.** CrossOver is no longer installed on the test Mac, so the comparison of 2026-10-31 (Alloy's
+DXMT path about 2% ahead of CrossOver's best path in Superposition) wasn't repeated. DXMT 0.80 is still the newest
+DXMT release.
+
+## 32-bit games: x87 math under Rosetta 2 (measured 2026-11-10)
+
+Rosetta 2 translates SSE math to the Mac's own floating point but runs the older x87 instructions in software, a known
+limit that others have met (an old game stuck below 5 fps on its audio library's x87 code; the `rosettax87` project,
+which replaces Rosetta's x87 routines and only works on one macOS build). Alloy can't change Rosetta or the game's own
+code, but Wine's 32-bit Windows libraries were themselves compiled to x87, the compiler's default for 32-bit. A
+32-bit test program, same source, in Alloy on an M4:
+
+| Work | Built for x87 | Built for SSE2 |
+|---|---|---|
+| 4×4 matrix times vector, 100,000 per loop | 12 loops/s | 1767 loops/s |
+| Square root, multiply and divide in doubles | 23 loops/s | 7861 loops/s |
+
+Engine package -7 builds all of Wine's 32-bit libraries with `-msse2 -mfpmath=sse` (`scripts/build-wine.sh`), as
+Valve's Proton does on Linux. DXMT's 32-bit libraries already were. Measured on the same Mac, engine -6 against -7:
+
+- The 32-bit Direct3D 9 test (3000 draws, 8 layers): 46–47 fps → 59–63 fps, pixel-identical. With the mapping fix of
+  package -6 that is 36 → about 60 fps.
+- Calls from a 32-bit program into Wine's C library (`msvcrt.dll`, `ucrtbase.dll`), per millisecond: `sin` 1282 →
+  13258, `cos` 1315 → 10413, `tan` 774 → 10284, `pow` 542 → 5703, `exp` 1425 → 8271, `log` 1349 → 13063, `atan2`
+  943 → 6139; `sqrt`, `floor` and `ceil` about the same.
+- Of 165 results compared, 157 are bit-identical and 8 differ by one unit in the last place, the difference between
+  rounding once in SSE and twice through x87.
+- A new environment is still created correctly, and 32-bit `cmd`, `reg` and the 4 GB memory test run as before.
+
+What it doesn't change: the game's own x87 code runs as slowly as before, so a 32-bit game that does its physics or
+audio in x87 gains only for the time it spends in Wine. 64-bit games never used x87. `winegstreamer.dll` (32-bit) is
+still the -6 build. No game has been measured with it yet.
