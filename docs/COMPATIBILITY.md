@@ -613,3 +613,32 @@ nothing says that subset will run Wine. The engine today is x86-64 Wine translat
 
 Plan: stay on Rosetta while macOS 27 is current, and move the engine to ARM64 Wine with FEX when CodeWeavers
 publishes those sources, measuring game code speed against Rosetta before switching anyone over.
+
+## A hitch every 30 seconds: registry saves (fixed in engine package -7, 2026-11-10)
+
+The MacGamingFixes project reported three problems in CrossOver's Wine, which this engine is built from: a freeze
+about every 30 seconds, late packets on Wi-Fi, and crackling audio. Each was checked here on the M4.
+
+**Registry saves: confirmed and fixed.** Every 30 seconds wineserver rewrites each registry branch that changed, the
+whole file, and answers no request meanwhile, so every program in the environment stops. A test program that calls
+the server in a loop while another thread changes a registry value twice a second, 95 seconds, 3.3 MB `system.reg`:
+
+| Engine | Stops over 2 ms | Length |
+|---|---|---|
+| -6 | 3 (at each save) | 27.4, 27.1 and 26.4 ms |
+| -7 (`patches/wine/0012`) | 3 | 7.1 ms at the first save, then 2.7 and 2.7 ms |
+
+With package -7 the save is written by a forked copy of the server while the server goes on; what remains is the
+fork. The registry on disk was checked during the run, after the server exited, and for a newly created environment.
+The stop grows with the registry: MacGamingFixes measured about 240 ms for Steam's 12 MB `system.reg` on their Mac;
+that size wasn't measured here.
+
+**Wi-Fi: not reproduced, nothing changed.** Their finding is that the Wi-Fi chip holds packets up to 25 ms unless a
+socket asks for a real-time service class. Pinging the gateway ten times a second, best effort against the voice and
+responsive-data classes, 240 pings each: median 4.3 to 4.5 ms and none over 15 ms in every class. The Mac was on an
+iPhone hotspot, which may not behave like a home router, so this isn't a verdict on their result.
+
+**Audio: not reproduced, nothing changed.** Wine's CoreAudio driver uses 10 ms periods and leaves CoreAudio's block
+size at its default (512 frames, 10.7 ms at 48 kHz). A silent event-driven stream on the built-in speakers at 48 kHz,
+writing one period per wake-up for 15 seconds: 1501 wake-ups, the buffer never ran dry, longest gap 12 ms. Their
+report concerns Bluetooth headsets and USB microphones, which weren't tested.

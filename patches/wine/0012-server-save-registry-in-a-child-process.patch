@@ -1,0 +1,166 @@
+Alloy: server: save the registry from a child process, so programs don't stop while it is written (macOS).
+
+Every 30 seconds wineserver rewrites each registry branch that changed, the whole file, and it answers no request
+while it does. Every program in the prefix stops for that long: 26 to 27 ms with a 3.3 MB system.reg under
+Rosetta 2, three times in a 95 second test, and a prefix with Steam in it has a registry several times that size.
+In a game that is a dropped frame or a hitch twice a minute. (Found by the MacGamingFixes project, which holds the
+saves back with a wrapper around wineserver.)
+
+The periodic save now forks: the child writes the registry as it was at the fork and exits, and the server goes on.
+The server marks the saved branches clean at the fork, so changes made meanwhile go into the next save, and marks
+them dirty again if the child fails. Saving at exit waits for a child still writing, then saves as before, so the
+files on disk are never older than what a synchronous save would have left. A child still running after a whole
+period is killed and that save is done in the server.
+
+Measured with the same test: the stops are 7 ms for the first save and 2.7 ms after it (the fork itself).
+
+--- a/server/mach.c
++++ b/server/mach.c
+@@ -53,7 +53,8 @@
+ 
+ void sigchld_callback(void)
+ {
+-    assert(0);  /* should never be called on MacOS */
++    /* the only child the server has on macOS is the one saving the registry */
++    reap_registry_save();
+ }
+ 
+ static void mach_set_error(kern_return_t mach_error)
+--- a/server/object.h
++++ b/server/object.h
+@@ -277,6 +277,9 @@
+ extern int wow64_using_32bit_prefix;
+ extern void init_registry(void);
+ extern void flush_registry(void);
++#ifdef __APPLE__
++extern void reap_registry_save(void);
++#endif
+ 
+ static inline int is_machine_32bit( unsigned short machine )
+ {
+--- a/server/registry.c
++++ b/server/registry.c
+@@ -36,6 +36,10 @@
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include <unistd.h>
++#ifdef __APPLE__
++#include <signal.h>
++#include <sys/wait.h>
++#endif
+ 
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+@@ -2131,6 +2135,85 @@
+     return ret;
+ }
+ 
++#ifdef __APPLE__
++
++/* Saving a branch rewrites its whole file, and the server answers no request while it does: every 30 seconds each
++ * program in the prefix stops for as long as that takes (27 ms for a 3 MB system.reg under Rosetta 2, and a prefix
++ * with Steam in it grows past 10 MB). The periodic save is done by a forked child instead, which writes the registry
++ * as it was at the fork while the server goes on. The server marks the branches clean at the fork, so changes made
++ * during the save are written by the next one, and marks them dirty again if the child fails. */
++
++static pid_t save_child;                  /* child process writing the registry, 0 if none */
++static unsigned int save_child_branches;  /* bit mask of the branches it is writing */
++
++/* the save child has ended */
++static void save_child_done( int failed )
++{
++    int i;
++
++    for (i = 0; failed && i < save_branch_count; i++)
++        if (save_child_branches & (1u << i)) save_branch_info[i].key->flags |= KEY_DIRTY;
++    save_child = 0;
++    save_child_branches = 0;
++}
++
++/* collect the save child if it has ended (SIGCHLD) */
++void reap_registry_save(void)
++{
++    int status;
++    pid_t ret;
++
++    if (!save_child) return;
++    ret = waitpid( save_child, &status, WNOHANG );
++    if (ret == save_child) save_child_done( !WIFEXITED(status) || WEXITSTATUS(status) );
++    else if (ret == -1 && errno != EINTR) save_child_done( 1 );
++}
++
++/* wait for the save child, so that a save that follows cannot be overwritten by its older copy */
++static void wait_registry_save( int kill_it )
++{
++    int status;
++    pid_t ret;
++
++    reap_registry_save();  /* it may have ended already */
++    if (!save_child) return;
++    if (kill_it) kill( save_child, SIGKILL );
++    while ((ret = waitpid( save_child, &status, 0 )) == -1 && errno == EINTR) /* nothing */;
++    save_child_done( kill_it || ret != save_child || !WIFEXITED(status) || WEXITSTATUS(status) );
++}
++
++/* start saving the dirty branches in a child process; returns 0 if it could not be started */
++static int save_in_background(void)
++{
++    static const int signals[] = { SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGIO, SIGCHLD, SIGALRM };
++    unsigned int mask = 0;
++    pid_t pid;
++    int i;
++
++    for (i = 0; i < save_branch_count; i++)
++        if (save_branch_info[i].key->flags & KEY_DIRTY) mask |= 1u << i;
++    if (!mask) return 1;
++
++    if ((pid = fork()) == -1) return 0;
++    if (!pid)
++    {
++        int ok = 1;
++
++        /* the server's handlers write to pipes the child shares with it */
++        for (i = 0; i < ARRAY_SIZE(signals); i++) signal( signals[i], SIG_DFL );
++        for (i = 0; i < save_branch_count; i++)
++            if (mask & (1u << i)) ok &= save_branch( save_branch_info[i].key, save_branch_info[i].filename );
++        _exit( !ok );  /* not exit(): the server's exit handlers remove its socket */
++    }
++    save_child = pid;
++    save_child_branches = mask;
++    for (i = 0; i < save_branch_count; i++)
++        if (mask & (1u << i)) make_clean( save_branch_info[i].key );
++    return 1;
++}
++
++#endif  /* __APPLE__ */
++
+ /* periodic saving of the registry */
+ static void periodic_save( void *arg )
+ {
+@@ -2138,6 +2221,16 @@
+ 
+     if (fchdir( config_dir_fd ) == -1) return;
+     save_timeout_user = NULL;
++#ifdef __APPLE__
++    /* a child still writing after a whole period is stuck: stop it and save here */
++    wait_registry_save( 1 );
++    if (save_in_background())
++    {
++        if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
++        set_periodic_save_timer();
++        return;
++    }
++#endif
+     for (i = 0; i < save_branch_count; i++)
+         save_branch( save_branch_info[i].key, save_branch_info[i].filename );
+     if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
+@@ -2156,6 +2249,9 @@
+ {
+     int i;
+ 
++#ifdef __APPLE__
++    wait_registry_save( 0 );
++#endif
+     if (fchdir( config_dir_fd ) == -1) return;
+     for (i = 0; i < save_branch_count; i++)
+     {
