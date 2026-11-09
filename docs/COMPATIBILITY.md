@@ -588,3 +588,28 @@ Valve's Proton does on Linux. DXMT's 32-bit libraries already were. Measured on 
 What it doesn't change: the game's own x87 code runs as slowly as before, so a 32-bit game that does its physics or
 audio in x87 gains only for the time it spends in Wine. 64-bit games never used x87. `winegstreamer.dll` (32-bit) is
 still the -6 build. No game has been measured with it yet.
+
+## After Rosetta 2: what was checked (2026-11-10)
+
+Apple keeps Rosetta 2 fully available through macOS 27 and, from macOS 28, only a subset meant for older Mac games;
+nothing says that subset will run Wine. The engine today is x86-64 Wine translated by Rosetta.
+
+- **CodeWeavers' sources.** Their ARM64 work (a CrossOver Preview with native ARM64 Wine, a custom FEX build and
+  ARM64 DXMT, July 2026) isn't published as source yet: the newest source release is still 26.3.0, the one this engine
+  is built from. Its Wine has the basic Apple ARM64 signal code but no FEX and no support for a translator's
+  run-time code generation on macOS.
+- **What others ship.** MetalSharp Wine (source public, AGPL-3.0 for its own parts) is Wine 11.20 built for ARM64
+  macOS with FEX as ARM64EC and WoW64 modules, without Rosetta and without the chips' hardware memory-ordering mode.
+  Its own figures on an M4: an x86-64 workload takes 1.67 times as long as native, a 32-bit one 2.42 times. Rosetta
+  took 1.07 to 1.23 times in Alloy's own test above, so for a game's own code the open path is slower today, though
+  Wine's and the graphics layer's code would run native.
+- **Tools.** Building ARM64 Wine needs an ARM64 Windows compiler (llvm-mingw); this Mac has only the x86 MinGW.
+- **A native server for translated games: tried, not shipped.** WineForge has an unmerged proposal to run only
+  `wineserver` as ARM64 while games stay under Rosetta, with 47.6 → 80.6 fps claimed for one game. The same idea was
+  built from this engine's source (the server reports x86-64 machines and treats its clients as translated): it runs,
+  MSync included. Calls per second from a test program, x86-64 server against ARM64 server: one thread, between −10%
+  and 0% on eight kinds of call; four and eight threads at once, between −11% and +14% with no pattern. No gain
+  that these tests can show, so the engine keeps its x86-64 server.
+
+Plan: stay on Rosetta while macOS 27 is current, and move the engine to ARM64 Wine with FEX when CodeWeavers
+publishes those sources, measuring game code speed against Rosetta before switching anyone over.
