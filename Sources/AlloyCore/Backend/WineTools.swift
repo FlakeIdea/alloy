@@ -3,7 +3,7 @@ import Foundation
 /// Wine's own programs, opened in one environment, as CrossOver offers for a bottle. None of them is a program the
 /// person added: they come with the Wine engine.
 public enum WineTool: String, CaseIterable, Sendable {
-    case settings, registry, commandPrompt, taskManager, controlPanel, uninstaller, explorer
+    case settings, registry, commandPrompt, taskManager, controlPanel, gameControllers, uninstaller, explorer
 
     public var title: String {
         switch self {
@@ -12,6 +12,7 @@ public enum WineTool: String, CaseIterable, Sendable {
         case .commandPrompt: return "Command Prompt"
         case .taskManager: return "Task Manager"
         case .controlPanel: return "Control Panel"
+        case .gameControllers: return "Game Controllers"
         case .uninstaller: return "Add or Remove Programs"
         case .explorer: return "Windows File Browser"
         }
@@ -24,6 +25,8 @@ public enum WineTool: String, CaseIterable, Sendable {
         case .commandPrompt: return ["start", "cmd.exe"]
         case .taskManager: return ["taskmgr"]
         case .controlPanel: return ["control"]
+        // Wine's own controller panel: what games see through DirectInput and XInput, with a live button test.
+        case .gameControllers: return ["control", "joy.cpl"]
         case .uninstaller: return ["uninstaller"]
         case .explorer: return ["explorer"]
         }

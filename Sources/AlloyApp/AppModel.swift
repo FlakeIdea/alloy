@@ -396,12 +396,19 @@ final class AppModel: ObservableObject {
     /// Moves the environment, and every game in it, onto the newest game engine. Only which engine runs it changes:
     /// its files, saves and installed games stay as they are.
     func moveToNewestEngine(_ prefix: WinePrefix) {
-        guard let newest = engineUpdate(for: prefix) else { return }
+        guard engineUpdate(for: prefix) != nil else { return }
         guard !isRunning(in: prefix) else {
             alert = AlertItem(title: "Close what's running in \(prefix.name) first",
                               message: "Quit the games and store apps running in this environment, then update its game engine.")
             return
         }
+        withSaveBackup(of: prefix, reason: "Before moving to a newer game engine") { [weak self] in
+            self?.moveToNewestEngineNow(prefix)
+        }
+    }
+
+    private func moveToNewestEngineNow(_ prefix: WinePrefix) {
+        guard let newest = engineUpdate(for: prefix) else { return }
         let old = prefix.runtimeID
         var p = prefix
         p.runtimeID = newest.id
@@ -493,6 +500,12 @@ final class AppModel: ObservableObject {
     }
 
     func trashPrefix(_ prefix: WinePrefix) {
+        withSaveBackup(of: prefix, reason: "Before moving the environment to the Trash") { [weak self] in
+            self?.trashPrefixNow(prefix)
+        }
+    }
+
+    private func trashPrefixNow(_ prefix: WinePrefix) {
         do {
             try prefixManager.trashPrefix(id: prefix.id)
             for var g in games where g.prefixID == prefix.id { g.prefixID = nil; save(g) }
@@ -519,6 +532,88 @@ final class AppModel: ObservableObject {
     func uninstallDXVK(from prefix: WinePrefix) {
         do { try prefixManager.uninstallDXVK(from: prefix); refreshPrefixes() }
         catch { report(error, title: "Could not restore original DLLs") }
+    }
+
+    // MARK: Save backups
+
+    @Published private(set) var backingUpSaves: UUID?
+    private var askedAboutBackups = false
+
+    var saveBackupsRoot: URL { SaveBackups.root(storage: settings.prefixStorageLocation) }
+
+    /// Copies the environment's saves (when the setting is on), then runs `then`. If the copy fails, asks whether to go
+    /// ahead without it.
+    func withSaveBackup(of prefix: WinePrefix, reason: String, then: @escaping @MainActor () -> Void) {
+        guard settings.backsUpSaves, backingUpSaves == nil else { then(); return }
+        backingUpSaves = prefix.id
+        let storage = settings.prefixStorageLocation
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<SaveBackups.Backup?, Error> in
+                Result { try SaveBackups.backUp(prefix: prefix, reason: reason, storage: storage) }
+            }.value
+            guard let self else { return }
+            self.backingUpSaves = nil
+            if case .failure(let error) = result {
+                let ask = NSAlert()
+                ask.messageText = "Alloy couldn't back up the saves in \(prefix.name)"
+                ask.informativeText = "\(LogRedactor.redact(error.localizedDescription))\n\nContinue without a backup?"
+                ask.addButton(withTitle: "Cancel")
+                ask.addButton(withTitle: "Continue Without Backup")
+                guard ask.runModal() == .alertSecondButtonReturn else { return }
+            }
+            then()
+        }
+    }
+
+    func saveBackups(for prefix: WinePrefix) -> [SaveBackups.Backup] {
+        SaveBackups.list(prefixID: prefix.id, storage: settings.prefixStorageLocation)
+    }
+
+    func revealSaveBackups() {
+        try? FileManager.default.createDirectory(at: saveBackupsRoot, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(saveBackupsRoot)
+    }
+
+    /// Puts a backup's files back into its environment after asking, and backs up the current saves first.
+    func restoreSaves(_ backup: SaveBackups.Backup, into prefix: WinePrefix) {
+        guard !isRunning(in: prefix) else {
+            alert = AlertItem(title: "Close what's running in \(prefix.name) first",
+                              message: "Quit the games and store apps running in this environment, then restore its saves.")
+            return
+        }
+        let ask = NSAlert()
+        ask.messageText = "Restore the saves from \(DateFormatter.localizedString(from: backup.manifest.date, dateStyle: .medium, timeStyle: .short))?"
+        ask.informativeText = "Saves and settings in \(prefix.name) with the same names are replaced by the backup's (\(backup.manifest.files) files). Saves made since then that the backup doesn't have stay. Alloy backs up the current saves first."
+        ask.addButton(withTitle: "Restore")
+        ask.addButton(withTitle: "Cancel")
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        let storage = settings.prefixStorageLocation
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<Int, Error> in
+                Result {
+                    try SaveBackups.backUp(prefix: prefix, reason: "Before restoring an older backup", storage: storage)
+                    return try SaveBackups.restore(backup, into: prefix)
+                }
+            }.value
+            switch result {
+            case .success(let count):
+                self?.alert = AlertItem(title: "Saves restored", message: "\(count) files were put back into \(prefix.name).")
+            case .failure(let error):
+                self?.report(error, title: "Could not restore the saves")
+            }
+        }
+    }
+
+    /// Asked once: keep backing up saves before big changes, or not.
+    func askAboutSaveBackupsIfNeeded() {
+        guard settings.backupSaves == nil else { return }
+        let ask = NSAlert()
+        ask.messageText = "Back up game saves before big changes?"
+        ask.informativeText = SaveBackups.settingHelp + "\n\nYou can change this later in Settings."
+        ask.addButton(withTitle: "Keep Backups On")
+        ask.addButton(withTitle: "Turn Off")
+        settings.backupSaves = ask.runModal() == .alertFirstButtonReturn
+        saveSettings()
     }
 
     // MARK: Game engine
@@ -1029,6 +1124,7 @@ final class AppModel: ObservableObject {
     func environmentMenu(for prefix: WinePrefix) -> [MenuChoice] {
         let ready = !prefix.isReadOnly && prefix.isInitialized()
         let current = WindowsVersion.current(in: prefix)
+        let backups = saveBackups(for: prefix)
         return [
             MenuChoice(title: "Run a Program in This Environment…", enabled: ready) { self.runProgram(in: prefix) },
             MenuChoice(title: "Windows Tools", enabled: ready, children: WineTool.allCases.map { tool in
@@ -1036,6 +1132,9 @@ final class AppModel: ObservableObject {
             }),
             MenuChoice(title: "Windows Version", enabled: ready, children: WindowsVersion.allCases.map { version in
                 MenuChoice(title: version.title, checked: version == current) { self.setWindowsVersion(version, in: prefix) }
+            }),
+            MenuChoice(title: "Restore Game Saves", enabled: ready && !backups.isEmpty, children: backups.map { backup in
+                MenuChoice(title: SaveBackups.describe(backup)) { self.restoreSaves(backup, into: prefix) }
             }),
         ]
     }
@@ -1136,7 +1235,7 @@ final class AppModel: ObservableObject {
         let log = StoreInstaller.executable(of: .steam, in: prefix)?.deletingLastPathComponent()
             .appendingPathComponent("logs/connection_log.txt")
         preparing.insert(game.id)
-        requestLaunch(steam, extraArguments: ["-silent"])
+        requestLaunch(steam, extraArguments: ["-silent", "-nofriendsui"])
         Task { @MainActor [weak self] in
             for second in 1...90 {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -1437,11 +1536,42 @@ final class AppModel: ObservableObject {
             if macConditions != conditions { macConditions = conditions }
         }
         metricsHotKey.isEnabled = anyRunning && settings.metricsShortcut
+        if storePollTick % 10 == 0 { updateSteamBackground() }
+        // Once the welcome steps (if any) are done and Alloy is in front, ask about save backups.
+        if storePollTick % 10 == 5, settings.backupSaves == nil, !askedAboutBackups, sheet == nil, alert == nil,
+           NSApplication.shared.isActive, ProcessInfo.processInfo.environment["ALLOY_SNAPSHOT_DIR"] == nil {
+            askedAboutBackups = true
+            askAboutSaveBackupsIfNeeded()
+        }
         // About every 3 s while a store app runs or a download is shown.
         storePollTick += 1
         if storePollTick % 10 == 1, !storeDownloads.isEmpty || gameInstallStores.contains(where: { store in
             storeEntry(store).map { sessions[$0.id]?.state.isRunning == true } ?? false }) {
             refreshStoreDownloads()
+        }
+    }
+
+    /// Environments whose Steam is at background priority because a game is running there.
+    private var steamBackgrounded: Set<URL> = []
+
+    /// Every 3 s: Steam's processes in an environment with a running game go to background priority (new ones too, as
+    /// Steam starts helpers), and get their priority back once no game runs there or the setting is off.
+    private func updateSteamBackground() {
+        var playing: Set<URL> = []
+        if settings.steamInBackground {
+            for session in sessions.values where session.state.isRunning {
+                guard let path = session.command.environment["WINEPREFIX"], let program = session.command.arguments.first,
+                      let name = WindowsProcesses.programName(program), !SteamBackground.programs.contains(name) else { continue }
+                playing.insert(URL(fileURLWithPath: path).standardizedFileURL)
+            }
+        }
+        let touched = playing.union(steamBackgrounded)
+        steamBackgrounded = playing
+        guard !touched.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for prefix in touched {
+                SteamBackground.setBackground(playing.contains(prefix), for: SteamBackground.processes(in: prefix))
+            }
         }
     }
 

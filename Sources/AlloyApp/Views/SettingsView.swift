@@ -41,6 +41,18 @@ struct SettingsView: View {
                     Toggle("Show or hide game metrics with \(MetricsHotKey.display)", isOn: $draft.metricsShortcut)
                     Text("Metrics (FPS, frame time, memory, and the rendering and scaled resolution) start hidden. While a game runs, \(MetricsHotKey.display) works even when the game is in front. With this off, games start without the metrics overlay loaded.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Keep Steam in the background while you play", isOn: $draft.steamInBackground)
+                    Text("While a game runs, Steam in the same environment gets the lowest priority and the Mac's efficiency cores, so it can't take processor time from the game. Steam keeps working, only slower to respond. It gets its normal priority back when you quit the game.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Panel("Game saves") {
+                    Toggle("Back up game saves before big changes", isOn: Binding(
+                        get: { draft.backsUpSaves }, set: { draft.backupSaves = $0 }))
+                    Text(SaveBackups.settingHelp).font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Show Backups in Finder") { model.revealSaveBackups() }
+                        Spacer()
+                    }
                 }
                 Panel("Updates") {
                     HStack {

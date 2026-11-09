@@ -275,6 +275,39 @@ import Testing
         #expect(ScrollSpeed.label(150) == "1.5×" && ScrollSpeed.label(200) == "2×" && ScrollSpeed.label(75) == "0.75×")
     }
 
+    /// 32-bit games get 4 GB when the engine's ntdll reads WINE_LARGE_ADDRESS_AWARE; 64-bit games never need it.
+    @Test func largeAddressSpaceFor32BitGames() throws {
+        let dir = TempDir()
+        var game32 = makeGame(in: dir, exe: "Old.exe", data: PEFixture.make(machine: 0x14c, pe32Plus: false))
+        let game64 = makeGame(in: dir)
+        let prefix = makeInitializedPrefix(in: dir)
+        let unix = "Wine Devel.app/Contents/Resources/wine/lib/wine/x86_64-unix/"
+        #expect(game32.largeAddressSpace)
+        let laa = { (game: Game, runtime: WineRuntime) in
+            try self.backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: LaunchOptions()).environment["WINE_LARGE_ADDRESS_AWARE"]
+        }
+
+        dir.write(unix + "ntdll.so", Data("....WINEMSYNC....".utf8))
+        var runtime = makeFakeRuntime(in: dir, moltenVK: true)
+        #expect(!runtime.hasLargeAddressOption && !backend.capabilities(of: runtime).largeAddressSpace)
+        #expect(try laa(game32, runtime) == nil)
+
+        dir.write(unix + "ntdll.so", Data("....WINEMSYNC....WINE_LARGE_ADDRESS_AWARE....".utf8))
+        runtime = makeFakeRuntime(in: dir, moltenVK: true)
+        #expect(runtime.hasLargeAddressOption && backend.capabilities(of: runtime).largeAddressSpace)
+        #expect(try laa(game32, runtime) == "1")
+        #expect(try laa(game64, runtime) == nil)
+        game32.largeAddressSpace = false
+        #expect(try laa(game32, runtime) == nil)
+
+        // Saved games from before the setting load with it on; turning it off survives a save.
+        let json = try JSONEncoder().encode(game32)
+        #expect(try JSONDecoder().decode(Game.self, from: json).largeAddressSpace == false)
+        var old = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+        old.removeValue(forKey: "largeAddressSpace")
+        #expect(try JSONDecoder().decode(Game.self, from: JSONSerialization.data(withJSONObject: old)).largeAddressSpace)
+    }
+
     /// Low input delay is on by default, but only on a DXMT whose d3d11 reads dxgi.maxFrameLatency.
     @Test func lowInputDelayNeedsTheEngineOption() throws {
         let dir = TempDir()

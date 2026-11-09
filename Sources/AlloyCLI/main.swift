@@ -28,7 +28,7 @@ usage:
   alloyctl components <prefix-id> <exe-path>
   alloyctl install-runtime <components.json URL> [package-id]
   alloyctl install-game <prefix-id> <setup.exe|setup.msi> <name>
-  alloyctl run <prefix-id> <exe-path> [--graphics <backend>] [--hud | --metrics-hidden] [--no-avx] [--sync default|off|esync|msync] [--dlss] [--metalfx <factor>] [--dx11] [--queued-frames-default] [--scroll-speed <percent>] [--runtime <wine-binary>] [--fps-cap display|off|<n>] [--shader-cache <game-id>] [--timeout <s>] [--env K=V]... [-- <args>...]
+  alloyctl run <prefix-id> <exe-path> [--graphics <backend>] [--hud | --metrics-hidden] [--no-avx] [--sync default|off|esync|msync] [--dlss] [--metalfx <factor>] [--dx11] [--queued-frames-default] [--scroll-speed <percent>] [--no-large-address] [--runtime <wine-binary>] [--fps-cap display|off|<n>] [--shader-cache <game-id>] [--timeout <s>] [--env K=V]... [-- <args>...]
 graphics backends: \(GraphicsBackendKind.allCases.map(\.rawValue).joined(separator: ", "))
 """
 
@@ -166,7 +166,7 @@ do {
             let usable = GraphicsBackendKind.allCases.filter { caps.status(of: $0).isUsable }.map(\.rawValue)
             let steam = SteamInstaller.missingRequirements(in: r).isEmpty ? "ready" : "incomplete"
             print("\(r.displayName)\n  path: \(r.wineBinary.path)\n  archs: \(r.architectures.map(\.rawValue)) graphics: \(usable)")
-            print("  GnuTLS: \(r.hasGnuTLS ? "yes" : "no")  Steam web helper fix: \(r.hasSteamWebHelperFix ? "yes" : "no")  Steam: \(steam)  Video (GStreamer): \(r.hasGStreamer ? "yes" : "no")  Low input delay: \(r.hasFrameLatencyOption ? "yes" : "no")  Scroll speed: \(r.hasScrollSpeedOption ? "yes" : "no")")
+            print("  GnuTLS: \(r.hasGnuTLS ? "yes" : "no")  Steam web helper fix: \(r.hasSteamWebHelperFix ? "yes" : "no")  Steam: \(steam)  Video (GStreamer): \(r.hasGStreamer ? "yes" : "no")  Low input delay: \(r.hasFrameLatencyOption ? "yes" : "no")  Scroll speed: \(r.hasScrollSpeedOption ? "yes" : "no")  32-bit 4 GB: \(r.hasLargeAddressOption ? "yes" : "no")")
         }
 
     case "prefixes":
@@ -323,6 +323,7 @@ do {
         var shaderCacheID: UUID?
         var runtimeOverride: URL?
         var scrollSpeed = ScrollSpeed.standard
+        var largeAddressSpace = true
         var programArgs: [String] = []
         var i = 2
         while i < args.count {
@@ -350,6 +351,7 @@ do {
                 guard i < args.count, let percent = Int(args[i]), ScrollSpeed.range.contains(percent) else { fail(usage) }
                 scrollSpeed = percent
             case "--no-avx": graphics.advertiseAVX = false
+            case "--no-large-address": largeAddressSpace = false
             case "--sync":
                 i += 1
                 guard i < args.count, let mode = SyncMode(rawValue: args[i]) else { fail(usage) }
@@ -386,6 +388,7 @@ do {
                         executableRelativePath: exe.lastPathComponent, prefixID: p.id, arguments: programArgs,
                         environment: env, graphics: graphics)
         game.scrollSpeedPercent = scrollSpeed
+        game.largeAddressSpace = largeAddressSpace
         let r = runtimeOverride.map { backend.makeRuntime(kind: .custom, binary: $0, root: $0.deletingLastPathComponent().deletingLastPathComponent()) }
             ?? runtime(for: p)
         if graphics.metalFXSpatialFactor != nil && !backend.capabilities(of: r).metalFXSpatialUpscaling.contains(graphics.backend) {

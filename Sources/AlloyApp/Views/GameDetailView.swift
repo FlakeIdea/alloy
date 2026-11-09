@@ -60,6 +60,7 @@ struct GameDetailView: View {
                 }
                 GraphicsCard(game: game)
                 ScrollingCard(game: game)
+                if !game.isApp { ControllersCard(game: game) }
 
                 Disclosure(title: "Advanced settings", isExpanded: $showAdvanced) {
                     VStack(spacing: 18) {
@@ -795,6 +796,11 @@ struct GameEditor: View {
                         }
                         if caps.supportsAVXAdvertisement {
                             Toggle("Advertise AVX to the game (Rosetta 2)", isOn: $draft.graphics.advertiseAVX)
+                        }
+                        // Shown for 32-bit games, and when the traits aren't known yet.
+                        if caps.largeAddressSpace && (traits.map { $0.machine == .x86 } ?? true) {
+                            Toggle("More memory for 32-bit games", isOn: $draft.largeAddressSpace)
+                            Text(LargeAddressSpace.help).font(.caption).foregroundStyle(.secondary)
                         }
                         if caps.syncModes.count > 1 {
                             Picker("Synchronisation", selection: $draft.graphics.syncMode) {

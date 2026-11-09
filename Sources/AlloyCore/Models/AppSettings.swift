@@ -19,6 +19,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var metricsShortcut: Bool
     /// Look for a newer Alloy once a day (one request to flake.co.in that sends nothing about this Mac).
     public var checkForUpdates: Bool
+    /// While a game plays, Steam in its environment runs at background priority (`SteamBackground`).
+    public var steamInBackground: Bool
+    /// Copy each environment's game saves before Alloy changes it (`SaveBackups`). Nil until the person has been asked;
+    /// backups are made meanwhile.
+    public var backupSaves: Bool?
+    public var backsUpSaves: Bool { backupSaves ?? true }
 
     /// The components manifest: the override, else the address the release was built with (Info.plist).
     public var componentsURL: URL? {
@@ -47,6 +53,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         acceptedTermsVersion = nil
         metricsShortcut = true
         checkForUpdates = true
+        steamInBackground = true
+        backupSaves = nil
     }
 
     public init(from decoder: Decoder) throws {
@@ -63,6 +71,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         acceptedTermsVersion = try c.decodeIfPresent(Int.self, forKey: .acceptedTermsVersion)
         metricsShortcut = try c.decodeIfPresent(Bool.self, forKey: .metricsShortcut) ?? true
         checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? true
+        steamInBackground = try c.decodeIfPresent(Bool.self, forKey: .steamInBackground) ?? true
+        backupSaves = try c.decodeIfPresent(Bool.self, forKey: .backupSaves)
     }
 }
 

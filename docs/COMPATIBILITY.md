@@ -443,3 +443,68 @@ with `--in-process-gpu --disable-gpu` (`patches/wine/0001`), so it draws on the 
 86 to 96 FPS with dropped frames on the store page, so scrolling can feel uneven. Drawing on the GPU was tried in
 engine builds: through Direct3D 11 (DXMT) the web helper crashed, through OpenGL it stopped responding, and through
 Vulkan (MoltenVK) Steam's frame drew but its pages stayed black and at 1× scale. Steam keeps the CPU path for now.
+
+## Direct3D 9, 32-bit games and first-play stutter (measured 2026-11-09)
+
+Test Mac: M4 MacBook Pro. Programs written for these tests; no game was run.
+
+**32-bit OpenGL and Direct3D 9.** Direct3D 9 games go through WineD3D, which draws with OpenGL. In a 32-bit game,
+Wine's WoW64 layer has to give each mapped OpenGL buffer a low (32-bit) address, and on macOS it did that with a new
+`mach_vm_remap` every time the game mapped a buffer, which WineD3D does on nearly every draw. A D3D9 test with 3000
+draws and 8 layers per frame ran at 36 fps as a 32-bit program and 106–125 fps as a 64-bit one. Engine package
+`dxmt-0.80-cx26.3-6` keeps the low mapping and reuses it while the buffer still sits on the same memory
+(`patches/wine/0010`): 26008 of 26011 maps reused it, and the 32-bit test went from 36 to 47 fps with identical
+pixels. 64-bit games are unchanged.
+
+**DXVK for Direct3D 9: not shipped.** CrossOver's DXVK 1.10.3 was built (with fixes for newer MinGW headers, and
+geometry shaders and cull distances turned off for MoltenVK). As a 64-bit program the same test ran at 119 fps,
+no faster than WineD3D's 125. As a 32-bit program it fails to start: MoltenVK can't import host memory in WoW64
+(`vkCreateBuffer`: only Metal buffer handles). WineD3D's own Vulkan renderer ran at 4.8 fps as 64-bit and hung as
+32-bit.
+
+**More memory for 32-bit games.** A 32-bit program gets 2 GB of address space unless its executable is marked
+"large address aware". Alloy sets `WINE_LARGE_ADDRESS_AWARE=1` for 32-bit games (CrossOver's engine reads it in
+`ntdll`), so they get 4 GB: a 32-bit test that reserves memory until it can't got 1,920 MB without it and 3,968 MB
+with it. On by default; "More memory for 32-bit games" in a game's advanced settings turns it off, and engines that
+don't read the variable don't show the switch.
+
+**First-play shader stutter: nothing shipped.** DXMT converts shaders on a thread pool, but a draw waits for its
+pipeline to finish. A patch that skipped draws whose pipeline wasn't ready yet was tried with a D3D11 test bringing
+in 10 new shaders per frame (300 in all): the 30 frames took 275–375 ms instead of 540–610 ms, but the worst frame
+got worse (48–79 ms instead of about 30 ms), and skipped draws leave objects missing for a frame. Not shipped. Alloy's
+per-game shader caches (above) still remove the stutter from later plays.
+
+## Steam in the background while you play (added 2026-11-09)
+
+While a game runs in an environment, Steam's processes there (`steam.exe`, `steamwebhelper.exe`, `steamservice.exe`,
+`steamerrorreporter.exe`) get macOS's background priority (`PRIO_DARWIN_BG`: lowest CPU priority, efficiency cores,
+throttled disk and network), and get normal priority back when the game ends. Alloy finds them by the Windows path
+and `WINEPREFIX` in each of the person's processes, checks every 3 seconds, and changes only their own processes. It
+can be undone without administrator rights, unlike `nice`. Steam keeps downloading and its overlay and friends keep
+working, more slowly. Settings > Playing turns it off.
+
+Measured with a CPU-bound D3D9 test standing in for a game and busy processes standing in for a busy Steam (Steam
+itself wasn't measured): alone 105 fps; with 4 busy processes 43 fps at normal priority and 102 fps at background
+priority; with 8, 27 and 86 fps; with 12, 1.9 and 87 fps. Alloy also opens Steam with `-silent -nofriendsui`;
+whether current Steam clients still honour `-nofriendsui` wasn't checked.
+
+## Game controllers (added 2026-11-09)
+
+A game's page lists the controllers macOS sees, and whether games will see each through XInput (Xbox controllers)
+or DirectInput. "Test in Wine…" opens Wine's Game Controllers panel (`control joy.cpl`) in the game's environment,
+which shows what games see and tests buttons and sticks. The engine's controller support is Wine's macOS IOHID bus;
+its SDL bus isn't built in. Checked without a controller connected (the panel opens with empty lists); no controller
+has been tested yet.
+
+## Save backups (added 2026-11-09)
+
+Before Alloy moves an environment to a newer game engine or moves it to the Trash, it copies the games' saves: each
+Windows user's AppData (Roaming, Local, LocalLow), Documents and Saved Games, the shared Documents, and Steam's
+`userdata`, leaving out caches, logs, temporary files, Steam screenshots, links and files over 1 GB. Copies go to
+`Save Backups/<environment>/<date>/` next to the environments, the last 3 per environment; on APFS they are clones
+and take no space until the game changes a save. The environment's menu has Restore Game Saves, which first backs up
+the current saves, then copies the backup's files back (files it doesn't have stay). If a backup fails, Alloy asks
+before going on without one.
+
+On first start Alloy asks whether to keep backups on or turn them off; Settings > Game saves changes it later and
+shows the backups in Finder. Checked with unit tests on made-up environments; not yet with a game's real saves.

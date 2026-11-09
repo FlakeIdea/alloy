@@ -15,6 +15,13 @@ struct EnvironmentsView: View {
                 }
                 .padding(.horizontal, -28)
 
+                if let id = model.backingUpSaves {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Backing up the game saves in \(model.prefix(id)?.name ?? "the environment")…")
+                    }
+                }
+
                 Panel("Wine runtimes") {
                     if model.runtimes.isEmpty {
                         Label { Text("No Wine runtime found") } icon: { Icon("exclamationmark.triangle.fill") }.foregroundStyle(Theme.warning)

@@ -1,0 +1,114 @@
+Alloy: opengl32: reuse the low mapping of a buffer the driver maps again (32-bit games, macOS).
+
+A 32-bit program sees only the low 4 GB, but the Mac OpenGL driver returns buffer maps far above that. For each
+glMapBuffer(Range) the wow64 thunk remaps the driver's memory into low memory with mach_vm_remap. Direct3D 8/9 games
+on WineD3D map a streaming buffer for nearly every draw, so a frame of 3000 draws made 3000 remaps, and a 32-bit
+Direct3D 9 test ran at 36 fps against 106 fps for the same test built 64-bit.
+
+The driver almost always returns the same memory for a buffer. The low mapping from the previous map still shows it
+when the host range is still backed by the same VM object in the same VM region: the low mapping holds a reference
+to that object, so its ID cannot be reused by another object while we compare. One mach_vm_region query replaces the
+remap; any change (other address, region or object, or a larger map) remaps as before.
+
+Measured with Alloy's Direct3D 9 test (3000 draws and 8 blended full-screen layers per frame, 32-bit, M4):
+36 fps before, 47 fps after; 26008 of 26011 maps reused the mapping; the frame is pixel-identical.
+
+--- a/dlls/opengl32/unix_wgl.c
++++ b/dlls/opengl32/unix_wgl.c
+@@ -181,6 +181,13 @@
+     void *vm_ptr;
+     SIZE_T vm_size;
+     BOOL pinned;
++#ifdef __APPLE__
++    UINT64 remap_base;             /* host address last remapped into vm_ptr */
++    SIZE_T remap_size;             /* size of that remap */
++    unsigned int remap_object;     /* VM object backing the host memory then */
++    UINT64 remap_region;           /* and the host region holding it, start and size */
++    UINT64 remap_region_size;
++#endif
+ 
+     /* members of Vulkan-backed buffer storages */
+     struct vk_device *vk_device;
+@@ -2390,6 +2397,9 @@
+         NtFreeVirtualMemory( GetCurrentProcess(), &buffer->vm_ptr, &buffer->vm_size, MEM_RELEASE );
+         buffer->vm_ptr = NULL;
+         buffer->vm_size = 0;
++#ifdef __APPLE__
++        buffer->remap_object = 0;
++#endif
+     }
+     if (NtAllocateVirtualMemory( GetCurrentProcess(), &buffer->vm_ptr, zero_bits, &size,
+                                  MEM_COMMIT, PAGE_READWRITE ))
+@@ -2549,7 +2559,26 @@
+     rb_put( &ctx->buffers->map, &buffer->name, &buffer->entry );
+     TRACE( "created buffer_storage %p\n", buffer );
+     return buffer;
++}
++
++#ifdef __APPLE__
++/* The VM region holding [base, base + size) of this process's memory, and the ID of the VM object behind it. */
++static BOOL host_region( mach_vm_address_t base, SIZE_T size, mach_vm_address_t *region, mach_vm_size_t *region_size,
++                         unsigned int *object )
++{
++    vm_region_top_info_data_t top;
++    mach_msg_type_number_t count = VM_REGION_TOP_INFO_COUNT;
++    mach_port_t object_name = MACH_PORT_NULL;
++
++    *region = base;
++    if (mach_vm_region( mach_task_self(), region, region_size, VM_REGION_TOP_INFO, (vm_region_info_t)&top,
++                        &count, &object_name ) != KERN_SUCCESS)
++        return FALSE;
++    if (object_name != MACH_PORT_NULL) mach_port_deallocate( mach_task_self(), object_name );
++    *object = top.obj_id;
++    return *object && *region <= base && *region + *region_size >= base + size;
+ }
++#endif
+ 
+ static void *wow64_map_buffer( TEB *teb, struct buffer *buffer, GLenum target, GLuint name, GLintptr offset,
+                                size_t length, GLbitfield access, void *ptr )
+@@ -2640,6 +2669,24 @@
+         }
+ 
+         lowaddr = (UINT_PTR)buffer->vm_ptr;
++        /* Games map a buffer for nearly every draw, and the driver usually returns the same memory. The low
++         * mapping from last time still shows it if the host range is still backed by the same VM object, which
++         * the low mapping keeps alive, so its ID can't be reused. Asking costs far less than remapping. */
++        if (buffer->remap_object && buffer->remap_base == base && buffer->remap_size >= mapping_size)
++        {
++            mach_vm_address_t region;
++            mach_vm_size_t region_size;
++            unsigned int object;
++
++            if (host_region( base, mapping_size, &region, &region_size, &object ) && object == buffer->remap_object
++                && region == buffer->remap_region && region_size == buffer->remap_region_size)
++            {
++                buffer->map_ptr = (void *)(lowaddr + ((vm_map_offset_t)ptr - base));
++                TRACE( "    reusing remapped pointer %p for %p\n", buffer->map_ptr, ptr );
++                return buffer->map_ptr;
++            }
++        }
++        buffer->remap_object = 0;
+         if ((kr = mach_vm_remap( mach_task_self(), &lowaddr, mapping_size, 0, VM_FLAGS_FIXED|VM_FLAGS_OVERWRITE,
+                                  mach_task_self(), base, FALSE, &cur_protection, &max_protection,
+                                  VM_INHERIT_DEFAULT )) != KERN_SUCCESS)
+@@ -2649,6 +2696,20 @@
+             goto unmap;
+         }
+ 
++        {
++            mach_vm_address_t region;
++            mach_vm_size_t region_size;
++            unsigned int object;
++
++            if (host_region( base, mapping_size, &region, &region_size, &object ))
++            {
++                buffer->remap_base = base;
++                buffer->remap_size = mapping_size;
++                buffer->remap_object = object;
++                buffer->remap_region = region;
++                buffer->remap_region_size = region_size;
++            }
++        }
+         buffer->map_ptr = (void *)(lowaddr + ((vm_map_offset_t)ptr - base));
+         TRACE( "    remapped pointer %p (aligned size %zu) to address %p\n", ptr, mapping_size, buffer->map_ptr );
+         return buffer->map_ptr;

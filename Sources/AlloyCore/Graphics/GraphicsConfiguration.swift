@@ -233,6 +233,8 @@ public struct BackendCapabilities: Equatable, Sendable {
     public var lowInputDelay: Set<GraphicsBackendKind> = []
     /// The engine takes a per-game scroll speed (`ScrollSpeed`).
     public var scrollSpeed = false
+    /// 32-bit games can be given 4 GB of address space (`LargeAddressSpace`).
+    public var largeAddressSpace = false
 
     public func status(of backend: GraphicsBackendKind) -> CapabilityStatus {
         graphics[backend] ?? .unavailable("Not supported by this runtime.")

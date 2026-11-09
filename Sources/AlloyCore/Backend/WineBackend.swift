@@ -121,7 +121,8 @@ public struct WineBackend: CompatibilityBackend {
                            // The bundle's Info.plist is written by ntdll, so the games category is in its strings.
                            hasGameModeBundles: ntdll.range(of: Data("public.app-category.games".utf8)) != nil,
                            hasFrameLatencyOption: hasLatency,
-                           hasScrollSpeedOption: winemac.range(of: Data(ScrollSpeed.variable.utf8)) != nil)
+                           hasScrollSpeedOption: winemac.range(of: Data(ScrollSpeed.variable.utf8)) != nil,
+                           hasLargeAddressOption: ntdll.range(of: Data(LargeAddressSpace.variable.utf8)) != nil)
     }
 
     static func kind(forAppName name: String) -> RuntimeKind {
@@ -212,7 +213,8 @@ public struct WineBackend: CompatibilityBackend {
                                    metalFXUpscaling: upscaling, metalFXFrameGeneration: frameGeneration,
                                    metalFXSpatialUpscaling: runtime.hasDXMT ? [.dxmt] : [],
                                    lowInputDelay: runtime.hasDXMT && runtime.hasFrameLatencyOption ? [.dxmt] : [],
-                                   scrollSpeed: runtime.hasScrollSpeedOption)
+                                   scrollSpeed: runtime.hasScrollSpeedOption,
+                                   largeAddressSpace: runtime.hasLargeAddressOption)
     }
 
     // MARK: Commands
@@ -339,6 +341,7 @@ public struct WineBackend: CompatibilityBackend {
         if caps.scrollSpeed && game.scrollSpeedPercent != ScrollSpeed.standard && ScrollSpeed.range.contains(game.scrollSpeedPercent) {
             env[ScrollSpeed.variable] = String(game.scrollSpeedPercent)
         }
+        if info.machine == .x86 && game.largeAddressSpace && caps.largeAddressSpace { env[LargeAddressSpace.variable] = "1" }
         if runtime.hasGStreamer { env.merge(VideoPlayback.environment(for: runtime)) { _, new in new } }
         // Shown from the start when the game asks for it; otherwise loaded for the shortcut and hidden as it appears.
         // Loaded for the metrics shortcut, the HUD starts hidden; it starts shown when the game is set to show it.
@@ -406,6 +409,15 @@ public enum ScrollSpeed {
         return number + "×"
     }
     public static let help = "How far a wheel click or a trackpad or Magic Mouse swipe scrolls while the game holds the mouse. At 1× each wheel click is one step, like on Windows, which games use for things like switching items. Raise it if scrolling lists or zooming feels slow."
+}
+
+/// A 32-bit Windows program gets 2 GB of address space unless its executable is marked large-address-aware, which many
+/// older games aren't although they run out of memory with mods, high-resolution textures or long sessions. Wine then
+/// gives every 32-bit program 4 GB, as Proton does by default. Measured on Alloy's engine with a 32-bit program that
+/// reserves memory until it can't: 1,920 MB without, 3,968 MB with. 64-bit programs are not affected.
+public enum LargeAddressSpace {
+    public static let variable = "WINE_LARGE_ADDRESS_AWARE"
+    public static let help = "Lets a 32-bit game use up to 4 GB of memory instead of 2 GB, which helps older games that crash or run out of memory with mods or high-resolution textures. 64-bit games already have plenty and aren't affected. Turn it off only if a 32-bit game misbehaves with it."
 }
 
 /// Low input delay: the game may queue only one frame ahead of the GPU instead of three (DXMT's default), so what the

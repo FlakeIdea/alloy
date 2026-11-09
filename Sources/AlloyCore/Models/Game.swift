@@ -28,6 +28,8 @@ public struct Game: Codable, Identifiable, Hashable, Sendable {
     /// How far scrolling goes while the game holds the mouse, in percent (`ScrollSpeed`). 100 is one wheel step per
     /// wheel click, like Windows.
     public var scrollSpeedPercent = ScrollSpeed.standard
+    /// A 32-bit game may use 4 GB of memory instead of 2 GB (`LargeAddressSpace`). On unless the person turns it off.
+    public var largeAddressSpace = true
 
     public init(id: UUID = UUID(),
                 name: String,
@@ -75,6 +77,7 @@ public struct Game: Codable, Identifiable, Hashable, Sendable {
         isApp = try c.decodeIfPresent(Bool.self, forKey: .isApp) ?? false
         customDLLs = try c.decodeIfPresent([CustomDLL].self, forKey: .customDLLs) ?? []
         scrollSpeedPercent = try c.decodeIfPresent(Int.self, forKey: .scrollSpeedPercent) ?? ScrollSpeed.standard
+        largeAddressSpace = try c.decodeIfPresent(Bool.self, forKey: .largeAddressSpace) ?? true
     }
 
     public var executableURL: URL {

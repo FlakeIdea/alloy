@@ -114,6 +114,8 @@ public struct WineRuntime: Codable, Identifiable, Hashable, Sendable {
     /// Wine's Mac driver reads `ALLOY_SCROLL_SPEED_PERCENT` (patches/wine/0009), so each game can have its own scroll
     /// speed.
     public var hasScrollSpeedOption: Bool
+    /// ntdll reads `WINE_LARGE_ADDRESS_AWARE`, so 32-bit games can use 4 GB of memory instead of 2 GB.
+    public var hasLargeAddressOption: Bool
     /// Name shown for Alloy-managed runtimes (from their manifest).
     public var customName: String?
 
@@ -123,7 +125,7 @@ public struct WineRuntime: Codable, Identifiable, Hashable, Sendable {
                 hasNVNGX: Bool = false, hasFrameInterpolation: Bool = false,
                 hasSteamWebHelperFix: Bool = false, hasGnuTLS: Bool = false, hasGStreamer: Bool = false,
                 hasGameModeBundles: Bool = false, hasFrameLatencyOption: Bool = false,
-                hasScrollSpeedOption: Bool = false) {
+                hasScrollSpeedOption: Bool = false, hasLargeAddressOption: Bool = false) {
         self.kind = kind
         self.wineBinary = wineBinary
         self.root = root
@@ -142,6 +144,7 @@ public struct WineRuntime: Codable, Identifiable, Hashable, Sendable {
         self.hasGameModeBundles = hasGameModeBundles
         self.hasFrameLatencyOption = hasFrameLatencyOption
         self.hasScrollSpeedOption = hasScrollSpeedOption
+        self.hasLargeAddressOption = hasLargeAddressOption
     }
 
     public var displayName: String {
