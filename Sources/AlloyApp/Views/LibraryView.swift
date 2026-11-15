@@ -34,7 +34,7 @@ struct LibraryView: View {
                                 Spotlight(game: featured)
                             }
                             VStack(alignment: .leading, spacing: 34) {
-                                if !model.hasGameEngine { WelcomeCard() }
+                                if model.setupStepsLeft > 0 || model.runningSetup { WelcomeCard() }
                                 activity
                                 if !games.isEmpty {
                                     shelf(title: "All games", count: games.count) {
@@ -199,23 +199,60 @@ struct AddGameMenu: View {
     }
 }
 
-/// First start: the one thing to do before adding games.
+/// The one thing to do before games run, done where the person is: the library, or a game's page. The button
+/// installs Rosetta 2 (if missing), the game engine and the Windows components, and the card shows the progress.
+/// Nothing here opens the Setup page.
 struct WelcomeCard: View {
     @EnvironmentObject var model: AppModel
+    /// On a game's page: no app icon, and the words are about this game.
+    var onGamePage = false
+
     var body: some View {
+        let progress = model.setupProgress
+        let failure = model.setupFailure
         HStack(alignment: .center, spacing: 20) {
-            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 64, height: 64)
+            if !onGamePage {
+                Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 64, height: 64)
+            }
             VStack(alignment: .leading, spacing: 6) {
-                Kicker(text: "First, one download")
-                Text("Welcome to Alloy").font(.system(size: 22, weight: .heavy))
-                Text("Install the game engine once (one download), then add your Windows games and press Play. Alloy picks the fastest graphics and installs what each game needs.")
-                    .foregroundStyle(.secondary)
+                Kicker(text: progress != nil ? "Installing" : "First, one download")
+                Text(onGamePage ? "Install the game engine to play" : "Welcome to Alloy")
+                    .font(.system(size: onGamePage ? 18 : 22, weight: .heavy))
+                if let progress {
+                    Group {
+                        if let fraction = progress.fraction { ProgressView(value: fraction) } else { ProgressView().progressViewStyle(.linear) }
+                    }
+                    .frame(maxWidth: 420)
+                    Text(progress.status).font(.callout).foregroundStyle(.secondary)
+                    Text("You can keep using Alloy. Play works when this finishes.").font(.callout).foregroundStyle(.tertiary)
+                } else {
+                    Text(onGamePage
+                         ? "One download, right here. Then press Play: Alloy picks the fastest graphics and installs what the game needs."
+                         : "Install the game engine once (one download), then add your Windows games and press Play. Alloy picks the fastest graphics and installs what each game needs.")
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if let failure {
+                        Label { Text(failure) } icon: { Icon("exclamationmark.triangle.fill") }
+                            .font(.callout).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if model.setupNeedsRosetta {
+                        HStack(spacing: 6) {
+                            Text("Includes Rosetta 2, Apple software. Installing it means you accept Apple's licence for it.")
+                            Button("Read Apple's licence") { NSWorkspace.shared.open(Rosetta.licenceURL) }
+                                .buttonStyle(.flat).foregroundStyle(Theme.accentAlt)
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             Spacer()
-            Button("Open Setup") { model.selection = .setup }.primaryAction(Theme.accent)
+            if progress == nil {
+                Button(failure != nil ? "Try Again" : model.setupNeedsRosetta ? "Agree and Install" : "Install") { model.installEverything() }
+                    .primaryAction(Theme.accent)
+            }
         }
-        .padding(22)
-        .glassCard(cornerRadius: 24)
+        .padding(onGamePage ? 18 : 22)
+        .glassCard(cornerRadius: onGamePage ? 20 : 24)
+        .onAppear { if model.manifest == nil, model.settings.componentsURL != nil { model.loadManifest() } }
     }
 }
 

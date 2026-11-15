@@ -18,12 +18,13 @@ struct GameDetailView: View {
                 if !game.isApp, let traits, let upgrade = model.recommendedUpgrade(for: game, traits: traits) {
                     UpgradeBanner(game: game, choice: upgrade)
                 }
+                if model.setupStepsLeft > 0 || model.runningSetup { WelcomeCard(onGamePage: true) }
                 GettingReadyBanner(game: game, state: state)
                 if let prefix = model.prefix(game.prefixID), let newest = model.engineUpdate(for: prefix) {
                     EngineUpdateBanner(prefix: prefix, newest: newest)
                 } else if let package = model.engineDownloadUpdate {
                     EngineDownloadBanner(package: package)
-                } else if let progress = model.engineProgress {
+                } else if !model.runningSetup, let progress = model.engineProgress {
                     ProgressView(value: progress.fraction) { Text(progress.status).font(.callout) }
                         .padding(16).glassCard()
                 }
@@ -434,7 +435,7 @@ struct GraphicsCard: View {
                 Text("Graphics: \(game.graphics.backend.displayName), for \(game.graphics.backend.directXVersions)")
                     .font(.caption).foregroundStyle(.tertiary)
             } else {
-                Text("Install the game engine from Setup to choose graphics settings.").foregroundStyle(Theme.warning)
+                Text("Install the game engine (the card at the top of this page) to choose graphics settings.").foregroundStyle(Theme.warning)
             }
         }
     }
@@ -700,6 +701,8 @@ struct GameEditor: View {
     @State private var newEnvKey = ""
     @State private var newEnvValue = ""
     @State private var candidates: [ExecutableScanner.Candidate] = []
+    /// A graphics path in another engine, picked in the list and waiting for the person's yes.
+    @State private var switchTo: GraphicsBackendKind?
 
     init(game: Game, traits: GameTraits? = nil) {
         self.traits = traits
@@ -744,9 +747,24 @@ struct GameEditor: View {
             Panel("Graphics & performance") {
                 if let caps {
                     Form {
-                        Picker("Graphics backend", selection: $draft.graphics.backend) {
+                        let elsewhere = model.backendsInOtherRuntimes(for: draft)
+                        Picker("Graphics backend", selection: Binding(get: { draft.graphics.backend }, set: { kind in
+                            // One that lives in another engine is asked about first: it means another environment.
+                            if elsewhere.contains(where: { $0.kind == kind }) { switchTo = kind } else { draft.graphics.backend = kind }
+                        })) {
                             ForEach(GraphicsBackendKind.allCases.filter { caps.status(of: $0).isUsable }) { kind in
                                 Text("\(kind.displayName) — \(kind.directXVersions)").tag(kind)
+                            }
+                            ForEach(elsewhere, id: \.kind) { other in
+                                Text("\(other.kind.displayName) — \(other.kind.directXVersions) (on \(other.runtime.displayName))").tag(other.kind)
+                            }
+                        }
+                        if !model.hasD3DMetal, SystemCheck.isAppleSilicon {
+                            HStack {
+                                Text("D3DMetal (DirectX 11–12) isn't on this Mac yet. It comes with Apple's Game Porting Toolkit, which you download from Apple.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Add D3DMetal…") { model.importD3DMetal() }
                             }
                         }
                         if case .experimental(let note) = caps.status(of: draft.graphics.backend) {
@@ -866,6 +884,13 @@ struct GameEditor: View {
             let folder = draft.folder
             candidates = await Task.detached { ExecutableScanner.scan(folder: folder) }.value
         }
+        .alert("Switch to \(switchTo?.displayName ?? "")?", isPresented: Binding(get: { switchTo != nil }, set: { if !$0 { switchTo = nil } }),
+               presenting: switchTo) { kind in
+            Button("Switch") { switchBackend(kind) }
+            Button("Cancel", role: .cancel) {}
+        } message: { kind in
+            Text(switchMessage(kind))
+        }
     }
 
     var original: Game? { model.game(draft.id) }
@@ -896,7 +921,7 @@ struct GameEditor: View {
 
     var spatialNote: String {
         // Measured on an M4 with a DXMT test at 1800×1169: 91 FPS without, 78 with 2×; 137 FPS at 1200×778 with 3×.
-        var parts = ["For games without DLSS. MetalFX upscales every frame to this many times the game's resolution before the display shows it. That costs about 2 ms of GPU time per frame at full Retina size."]
+        var parts = ["For games without DLSS. MetalFX upscales every frame to this many times the game's resolution before the display shows it. That costs about 2 ms of GPU time per frame at full Retina size. Only whole factors are offered: 1.5× landed unevenly on the display's pixels and looked grainy."]
         if let d = DisplayInfo.pointSizeAndScale(), d.scale > 1 {
             let w = d.width * 2 / 3 / 2 * 2, h = d.height * 2 / 3 / 2 * 2
             parts.append("At the game's usual \(d.width)×\(d.height), \(d.scale)× fills this Retina display pixel for pixel: sharper, a little slower.")
@@ -939,6 +964,18 @@ struct GameEditor: View {
     }
 
     var hasChanges: Bool { merged.map { $0 != original } ?? false }
+
+    /// What switching to a graphics path in another engine does, for the question asked first.
+    func switchMessage(_ kind: GraphicsBackendKind) -> String {
+        guard let other = model.backendsInOtherRuntimes(for: draft).first(where: { $0.kind == kind }) else { return "" }
+        return "\(kind.displayName) is part of \(other.runtime.displayName). \(draft.name) gets its own environment on it; the current environment stays on disk with its saves, and you can switch back here. Saves kept inside an environment don't move across by themselves."
+    }
+
+    func switchBackend(_ kind: GraphicsBackendKind) {
+        guard let other = model.backendsInOtherRuntimes(for: draft).first(where: { $0.kind == kind }),
+              let game = merged ?? original, let saved = model.switchBackend(kind, runtime: other.runtime, for: game) else { return }
+        draft = saved
+    }
 
     func save() {
         if let merged { model.save(merged) }

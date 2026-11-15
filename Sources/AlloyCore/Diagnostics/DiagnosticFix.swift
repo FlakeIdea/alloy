@@ -18,7 +18,7 @@ public enum DiagnosticFix: String, Hashable, CaseIterable, Sendable {
         case .syncOff: return "Turn Off MSync"
         case .compatibilityMode: return "Try Compatibility Mode"
         case .stopEnvironment: return "Stop Everything in This Environment"
-        case .openSetup: return "Open Setup"
+        case .openSetup: return "Install the Game Engine…"
         case .addDLL: return "Add DLL…"
         }
     }

@@ -153,6 +153,11 @@ struct RootView: View {
             }
         }
         .alert(item: $model.alert) { Alert(title: Text($0.title), message: Text($0.message)) }
+        .alert("Install what games need?", isPresented: $model.offeringSetup) {
+            Button(model.setupNeedsRosetta ? "Agree and Install" : "Install") { model.installEverything() }
+            if model.setupNeedsRosetta { Button("Read Apple's Licence") { NSWorkspace.shared.open(Rosetta.licenceURL) } }
+            Button("Not Now", role: .cancel) {}
+        } message: { Text(model.setupOfferMessage) }
         .task { await SnapshotMode.runIfRequested(model: model) }
         .task { await Updater.shared.checkIfDue(model: model) }
     }
@@ -195,6 +200,9 @@ private struct WizardOverlay: View {
 @MainActor
 enum SnapshotMode {
     static func runIfRequested(model: AppModel) async {
+        // Debug builds only: the release app has no screenshot or timing mode in it, so it can never ask for
+        // Screen Recording access.
+        #if DEBUG
         if ProcessInfo.processInfo.environment["ALLOY_TIMING"] != nil { await timeTabs(model: model); return }
         // Development aid: `ALLOY_SHOW_RT_OVERLAY=1` plays the ray tracing overlay shortly after Alloy opens.
         if ProcessInfo.processInfo.environment["ALLOY_SHOW_RT_OVERLAY"] != nil { RayTracingOverlay.shared.show(after: 1.5, for: 6) }
@@ -243,8 +251,10 @@ enum SnapshotMode {
         model.sheet = nil
         try? await Task.sleep(for: .seconds(0.6))
         NSApplication.shared.terminate(nil)
+        #endif
     }
 
+    #if DEBUG
     /// Development aid: `ALLOY_TIMING=1` switches between the tabs and prints how long each switch took to draw.
     static func timeTabs(model: AppModel) async {
         try? await Task.sleep(for: .seconds(3))
@@ -305,6 +315,7 @@ enum SnapshotMode {
         process.waitUntilExit()
         return process.terminationStatus == 0 && FileManager.default.fileExists(atPath: url.path)
     }
+    #endif
 }
 
 struct RuntimeStatusBadge: View {
@@ -315,13 +326,13 @@ struct RuntimeStatusBadge: View {
             Circle().fill(ready ? Theme.success : Theme.warning).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 Text(ready ? "Ready to play" : !model.rosettaInstalled ? "Rosetta 2 needed" : "Game engine needed").font(.caption.bold())
-                Text(ready ? "Game engine installed" : "Open Setup to install it").font(.caption2).foregroundStyle(.secondary)
+                Text(ready ? "Game engine installed" : "Click to install it").font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
         }
         .padding(10)
         .glassCard(cornerRadius: 14, interactive: true)
-        .onTapGesture { model.selection = .setup }
+        .onTapGesture { if ready { model.selection = .setup } else { model.offerSetupInPlace() } }
     }
 }
 

@@ -44,7 +44,7 @@ import Testing
         #expect(page.contains(Rosetta.licenceURL.absoluteString))
         for section in Terms.sections { #expect(page.contains(InstallerPages.escape(section.title))) }
         #expect(InstallerPages.inline("a **b** & <c>") == "a <b>b</b> &amp; &lt;c&gt;")
-        #expect(InstallerPages.welcome.contains("Rosetta 2") && InstallerPages.conclusion.contains("Install Everything"))
+        #expect(InstallerPages.welcome.contains("Rosetta 2") && InstallerPages.conclusion.contains("Click <b>Install</b>"))
     }
 
     @Test func readsTheTermsVersionTheInstallerRecorded() {

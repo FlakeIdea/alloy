@@ -26,7 +26,7 @@ struct EnvironmentsView: View {
                     if model.runtimes.isEmpty {
                         Label { Text("No Wine runtime found") } icon: { Icon("exclamationmark.triangle.fill") }.foregroundStyle(Theme.warning)
                         Text(RuntimeInstallGuide.summary).font(.callout).foregroundStyle(.secondary)
-                        Button("Install the Game Engine…") { model.selection = .setup }
+                        Button("Install the Game Engine…") { model.offerSetupInPlace() }
                         Text("You can also add your own Wine install folder in Settings.")
                             .font(.caption).foregroundStyle(.secondary)
                     }

@@ -422,6 +422,11 @@ do {
             try reg.start()
             print("[alloy] Crash window turned off in \(p.name) (crashes go to the log): \(reg.waitUntilExit(timeout: 30).summary)")
         }
+        if !p.isReadOnly && !ScaledFullscreen.isOn(in: p) {
+            let reg = LaunchSession(command: ScaledFullscreen.turnOnCommand(like: cmd), logFile: nil)
+            try reg.start()
+            print("[alloy] Scaled fullscreen turned on in \(p.name) (no display mode changes): \(reg.waitUntilExit(timeout: 30).summary)")
+        }
         let start = Date()
         let session = try launcher.launch(gameID: game.id, gameName: game.name, command: cmd)
         let state = stream(session, timeout: timeout, prefix: p)

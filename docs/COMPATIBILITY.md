@@ -708,3 +708,51 @@ its files), runs on D3DMetal on an M3 or later, and has its ray tracing switch o
 Checked: the panel was opened from the built app, appeared at the top left at screen-saver level, and removed itself.
 Not checked: over a running game, and over a game in exclusive fullscreen, where macOS may keep other windows off
 the screen. The tag says what Alloy gives the game; whether the game draws with ray tracing is its own setting.
+
+### Fullscreen at another resolution: scaled, no display mode change (2026-11-16)
+
+Reported with BeamNG.drive on a 14-inch MacBook Pro set to 1800×1169: borderless at 1800×1169 looked right, but
+exclusive fullscreen (the game picked 1512×945 and 1352×878) left the picture in a corner of the screen or with
+the interface and camera off. Wine's Mac driver handles such a request by capturing the display and switching its
+mode, which goes wrong on these displays.
+
+Alloy now sets Wine's `EmulateModeset` (`HKCU\Software\Wine\X11 Driver`, read by Wine 10 and later on every
+platform) once in each environment before a game starts. The display stays as it is: the game is told the screen
+has the size it asked for, its window covers the real screen, the picture is scaled to fit with its shape kept,
+and pointer positions are scaled to match.
+
+Measured with engine `dxmt-0.80-cx26.3-7` and a Direct3D 11 test in exclusive fullscreen at 1512×945 on the
+1800×1169 desktop, MetalFX upscaling on:
+
+| | As before | With `EmulateModeset` |
+|---|---|---|
+| What the program is told the screen is | (it stopped answering during the mode switch) | 1512×945 |
+| Its window on the Mac | 1512×945 at captured-display level, black | 1800×1169, normal level |
+| Picture | not drawn | whole picture on screen, all four corners and the border, 22-point bars above and below |
+| Pointer at (639, 666) on the Mac | | reported at (537, 541): scaled and offset for the bars |
+
+Not tested: BeamNG.drive itself or any other game; an external display; the Game Porting Toolkit's Wine 7.7, which
+ignores the setting. The scaling to the screen uses a nearest-pixel filter (see below), so a fullscreen resolution
+that is not a whole fraction of the desktop's looks slightly rough; the desktop's own resolution looks best.
+
+### MetalFX upscaling: whole factors only (2026-11-16)
+
+Reported: with MetalFX upscaling at 1.5× (1800×1169 → 2700×1753) everything looked grainy, "as if there is no
+smoothing". Cause: Wine's Mac driver enlarges a game's Metal layer to the display's pixels with a nearest-pixel
+filter (`magnificationFilter = kCAFilterNearest`). At 2× on a 2× Retina display the upscaled frame matches the
+display's pixels one for one. At 1.5× it does not: 2,700 pixels are spread over 3,600, so one pixel in every three
+is doubled, over the whole picture. A Direct3D 11 test picture (text, thin lines, a noisy patch) captured at 1.5×
+and 2× showed the uneven edges at 1.5× and clean ones at 2×.
+
+Alloy now offers 2× and 3× only, and a saved 1.5× is read as 2×. The cost is the larger MetalFX output (about 2 ms
+of GPU time per frame at full Retina size); the game still renders at its own resolution. A smooth filter for
+in-between sizes would need a change in the engine's Mac driver and is not done.
+
+### D3DMetal in the graphics backend list (2026-11-16)
+
+The game editor listed only the graphics paths of the game's current engine, so D3DMetal, which lives in its own
+engine (the Game Porting Toolkit's Wine), never appeared for a game on Alloy's engine. The list now also shows
+DXMT and D3DMetal from other installed engines, named with their engine. Choosing one asks first, then moves the
+game to its own environment on that engine (reused if it was made before); the old environment stays with its
+saves. Without D3DMetal on the Mac, a line under the list offers to add it. Built and unit-tested; the switch was
+not clicked through in the app.

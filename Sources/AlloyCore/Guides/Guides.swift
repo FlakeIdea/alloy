@@ -123,7 +123,7 @@ public enum InstallerPages {
     public static var conclusion: String {
         html(title: "Alloy is installed", body: """
         <h1>Alloy is installed</h1>
-        <p>Alloy opens now. Click <b>Install Everything</b> to download the game engine and the Windows
+        <p>Alloy opens now. Click <b>Install</b> on its first page to download the game engine and the Windows
         components, then add your first game.</p>
         <p>If something could not be installed, for example Rosetta 2 without an internet connection, Alloy's
         <b>Setup</b> page offers it again.</p>

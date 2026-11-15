@@ -136,8 +136,6 @@ final class AppModel: ObservableObject {
     /// What the setup wizard shows per step.
     @Published var setupStates: [SetupRunner.Step: SetupRunner.State] = [:]
     @Published private(set) var runningSetup = false
-    /// Set at launch: once runtimes are found, offer the setup wizard if Rosetta or the engine is missing.
-    private var offerSetupAfterDiscovery = false
     @Published var installingRosetta = false
     /// Progress text per environment while Windows components (Visual C++, .NET) are being installed.
     @Published var componentStatus: [UUID: String] = [:]
@@ -198,7 +196,6 @@ final class AppModel: ObservableObject {
         refreshRuntimes()
         importStoreGames()
         if ProcessInfo.processInfo.environment["ALLOY_SNAPSHOT_DIR"] == nil {
-            offerSetupAfterDiscovery = true
             if (settings.acceptedTermsVersion ?? 0) < Terms.version {
                 // People who installed with the .pkg agreed on its licence page.
                 if (Terms.acceptedByInstaller() ?? 0) >= Terms.version {
@@ -264,10 +261,51 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func offerSetupIfNeeded() {
-        guard offerSetupAfterDiscovery else { return }
-        offerSetupAfterDiscovery = false
-        if sheet == nil, setupStepsLeft > 0 { sheet = .wizard(.install) }
+    // MARK: Setup where the person is
+
+    /// True while the question "install what games need?" is up. It is asked on the page the person is on (a game's
+    /// page, the library, a sheet); nothing sends them to the Setup page.
+    @Published var offeringSetup = false
+
+    /// Rosetta 2 is still to install, which means agreeing to Apple's licence for it.
+    var setupNeedsRosetta: Bool { !rosettaInstalled }
+
+    /// Asks to install the game engine (and Rosetta 2 if missing) right here. Does nothing while it is installing.
+    func offerSetupInPlace() {
+        guard !runningSetup else { return }
+        if manifest == nil, settings.componentsURL != nil { loadManifest() }
+        offeringSetup = true
+    }
+
+    /// What the question says: what is downloaded, how large, and Apple's licence when Rosetta 2 is part of it.
+    var setupOfferMessage: String {
+        let size = manifest?.runtimes.first.map { " (\(RuntimeInstaller.megabytes($0.downloadBytes)))" } ?? ""
+        return "Alloy downloads its game engine\(size) and the Windows components games ask for, once. It installs in the background and shows its progress here."
+            + (setupNeedsRosetta ? " Rosetta 2 is Apple software: installing it means you accept Apple's licence for it." : "")
+    }
+
+    /// The step Install Everything is on, for a progress line outside the wizard.
+    var setupProgress: (status: String, fraction: Double?)? {
+        guard runningSetup else { return nil }
+        for step in SetupRunner.Step.allCases {
+            if case .working(let status, let fraction) = setupStates[step] { return (status, fraction) }
+        }
+        return ("Getting ready…", nil)
+    }
+
+    /// Why the last Install Everything stopped, if it did.
+    var setupFailure: String? {
+        guard !runningSetup else { return nil }
+        for step in SetupRunner.Step.allCases {
+            if case .failed(let reason) = setupStates[step] { return reason }
+        }
+        return nil
+    }
+
+    /// Nothing to run a game with. When that is because setup isn't finished, offers to finish it on the spot;
+    /// otherwise (a custom Wine folder that went away) explains.
+    private func offerEngine(orExplain title: String) {
+        if setupStepsLeft > 0 || runningSetup { offerSetupInPlace() } else { alert = AlertItem(title: title, message: RuntimeInstallGuide.summary) }
     }
 
     func showAdvanced(_ tab: AdvancedTab) {
@@ -341,6 +379,42 @@ final class AppModel: ObservableObject {
         save(g)
     }
 
+    /// The Metal graphics paths (DXMT, D3DMetal) that a game's current engine doesn't include but another installed
+    /// one does, with that engine. The game's editor lists them so they can be chosen without first knowing which
+    /// engine holds which.
+    func backendsInOtherRuntimes(for game: Game) -> [(kind: GraphicsBackendKind, runtime: WineRuntime)] {
+        let here = capabilities(for: game)
+        return [GraphicsBackendKind.dxmt, .d3dMetal].compactMap { kind in
+            guard here?.status(of: kind).isUsable != true else { return nil }
+            // The newest engine that has it: the list is in install order.
+            guard let runtime = runtimes.last(where: { backend.capabilities(of: $0).status(of: kind).isUsable }) else { return nil }
+            return (kind, runtime)
+        }
+    }
+
+    /// Moves a game onto a graphics path that lives in another engine. Environments belong to one engine, so the
+    /// game gets its own environment on that engine (reused if this was done before); the current one stays on disk
+    /// with its saves. Returns the game as saved.
+    @discardableResult
+    func switchBackend(_ kind: GraphicsBackendKind, runtime: WineRuntime, for game: Game) -> Game? {
+        var g = game
+        if prefix(g.prefixID)?.runtimeID != runtime.id {
+            let name = "\(game.name) (\(kind == .dxmt ? "DXMT" : kind.displayName))"
+            if let existing = ownPrefixes.first(where: { $0.name == name && $0.runtimeID == runtime.id }) {
+                g.prefixID = existing.id
+            } else {
+                guard let p = createPrefix(name: name, runtime: runtime) else { return nil }
+                g.prefixID = p.id
+                initializePrefix(p)
+            }
+        }
+        g.runtimeID = nil
+        g.graphics.backend = kind
+        g.graphics.syncMode = .default
+        save(g)
+        return g
+    }
+
     /// The D3DMetal 4 path for a game that ships DLSS Frame Generation, when a runtime for it is installed.
     func frameGenerationChoice(for game: Game, traits: GameTraits) -> GraphicsDefaults.Choice? {
         let choice = graphicsDefault(for: game, existingPrefixID: nil, traits: traits)
@@ -375,7 +449,7 @@ final class AppModel: ObservableObject {
         let backend = self.backend
         Task.detached {
             let found = backend.discoverRuntimes()
-            await MainActor.run { self.runtimes = found; self.offerSetupIfNeeded() }
+            await MainActor.run { self.runtimes = found }
         }
     }
 
@@ -438,7 +512,7 @@ final class AppModel: ObservableObject {
     /// Runs `wineboot --init`. Only the macOS Wine loader runs; no user-supplied Windows program.
     func initializePrefix(_ prefix: WinePrefix) {
         guard let runtime = runtimes.first(where: { $0.id == prefix.runtimeID }) ?? runtimes.first else {
-            alert = AlertItem(title: "No Wine runtime", message: RuntimeInstallGuide.summary); return
+            offerEngine(orExplain: "No Wine runtime"); return
         }
         do {
             let command = try backend.initializePrefixCommand(prefix: prefix, runtime: runtime)
@@ -707,7 +781,7 @@ final class AppModel: ObservableObject {
     /// Installs the components into the environment one after another, showing progress on the environment.
     func install(_ components: [WindowsComponent], into prefix: WinePrefix) {
         guard let runtime = runtimes.first(where: { $0.id == prefix.runtimeID }) ?? runtimes.first else {
-            alert = AlertItem(title: "No game engine", message: "Install the game engine from Setup first."); return
+            offerEngine(orExplain: "No game engine"); return
         }
         guard componentStatus[prefix.id] == nil, !components.isEmpty else { return }
         componentStatus[prefix.id] = "Preparing…"
@@ -800,7 +874,7 @@ final class AppModel: ObservableObject {
         let choice = GraphicsDefaults.choose(usage: [.d3d11], machine: .x64, runtimes: runtimes,
                                              preferredRuntime: runtimes.first { $0.id == settings.defaultRuntimeID }, backend: backend)
         guard let runtime = choice.runtime else {
-            alert = AlertItem(title: "No game engine", message: "Install the game engine from Setup first."); return
+            offerEngine(orExplain: "No game engine"); return
         }
         guard setupInstallStatus == nil, let prefix = createPrefix(name: name, runtime: runtime) else { return }
         setupInstallStatus = "Preparing an environment for \(name)…"
@@ -880,7 +954,7 @@ final class AppModel: ObservableObject {
         case .installVisualCpp: if let p = prefix(game.prefixID) { install([.visualCpp], into: p) }
         case .installDotNet: if let p = prefix(game.prefixID) { install([.dotNet], into: p) }
         case .addD3DMetal: importD3DMetal(); return
-        case .openSetup: selection = .setup; return
+        case .openSetup: offerSetupInPlace(); return
         case .addDLL: chooseDLLs(for: game); return
         case .stopEnvironment: if let p = prefix(game.prefixID) { stopAll(in: p) }
         default:
@@ -899,7 +973,7 @@ final class AppModel: ObservableObject {
     /// checks ownership and downloads; the game joins the library when its install finishes.
     func installThroughStore(_ link: StoreGameLink) {
         guard let entry = storeEntry(link.store) else {
-            alert = AlertItem(title: "\(link.store.displayName) isn't installed", message: "Install it from Setup first. Alloy sets it up in its own environment.")
+            alert = AlertItem(title: "\(link.store.displayName) isn't installed", message: "Install it first: Add Game › Install from Steam or Epic offers it. Alloy sets it up in its own environment.")
             return
         }
         if sessions[entry.id]?.state.isRunning == true, let prefix = prefix(entry.prefixID), let runtime = runtime(for: entry) {
@@ -943,7 +1017,7 @@ final class AppModel: ObservableObject {
         let choice = GraphicsDefaults.choose(usage: [.d3d11], machine: .x64, runtimes: candidates,
                                              preferredRuntime: candidates.first { $0.id == settings.defaultRuntimeID }, backend: backend)
         guard let runtime = choice.runtime else {
-            alert = AlertItem(title: "No Wine runtime", message: RuntimeInstallGuide.summary); return
+            offerEngine(orExplain: "No Wine runtime"); return
         }
         // An earlier, unfinished attempt's environment is reused rather than duplicated.
         guard let prefix = ownPrefixes.first(where: { $0.name == store.environmentName && $0.runtimeID == runtime.id })
@@ -1168,7 +1242,7 @@ final class AppModel: ObservableObject {
     func requestLaunch(_ game: Game, extraArguments: [String] = []) {
         guard let runtime = runtime(for: game) else {
             findings[game.id] = DiagnosticService.preflight(game: game, runtime: nil, prefix: prefix(game.prefixID))
-            alert = AlertItem(title: "No Wine runtime installed", message: RuntimeInstallGuide.summary)
+            offerEngine(orExplain: "No Wine runtime installed")
             return
         }
         guard let prefix = prefix(game.prefixID) else {
@@ -1324,11 +1398,13 @@ final class AppModel: ObservableObject {
         let needsVideo = VideoPlayback.needsSetup(prefix: prefix, runtime: runtime)
         // Once per environment: a crash then ends the game with a log Alloy explains, instead of Wine's debugger window.
         let needsQuietCrashes = !prefix.isReadOnly && !CrashDialog.isOff(in: prefix)
+        // Once per environment: fullscreen at the game's resolution is scaled to the screen, not a display mode change.
+        let needsScaledFullscreen = !prefix.isReadOnly && !ScaledFullscreen.isOn(in: prefix)
         let autoInstall = settings.autoInstallComponents
         let knownTraits = traits[game.id]
         let backend = self.backend, downloads = componentDownloads, scans = self.scans
         let hasSteam = StoreInstaller.executable(of: .steam, in: prefix) != nil
-        guard needsDLSS || needsVideo || needsQuietCrashes || autoInstall || hasSteam else { beginSession(game, command: command); return }
+        guard needsDLSS || needsVideo || needsQuietCrashes || needsScaledFullscreen || autoInstall || hasSteam else { beginSession(game, command: command); return }
         // Set up once per environment: Windows components the game needs, video decoders for environments made before
         // their runtime had them, and for DLSS → MetalFX the NGX shim and its registry entry.
         let managed = runtime.root.standardizedFileURL.path.hasPrefix(runtimesDirectory.standardizedFileURL.path + "/")
@@ -1367,6 +1443,11 @@ final class AppModel: ObservableObject {
                 if needsQuietCrashes {
                     // Not worth stopping the game for: without it a crash shows Wine's window, as before.
                     let session = LaunchSession(command: CrashDialog.turnOffCommand(like: command), logFile: nil)
+                    if (try? session.start()) != nil { _ = session.waitUntilExit(timeout: 30) }
+                }
+                if needsScaledFullscreen {
+                    // Not worth stopping the game for: without it fullscreen changes the display mode, as before.
+                    let session = LaunchSession(command: ScaledFullscreen.turnOnCommand(like: command), logFile: nil)
                     if (try? session.start()) != nil { _ = session.waitUntilExit(timeout: 30) }
                 }
                 if needsDLSS { try MetalFXDLSS.installShims(from: runtime, into: prefix, runtimeIsManaged: managed) }

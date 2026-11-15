@@ -509,7 +509,7 @@ private struct EnginePill: View {
     @EnvironmentObject var model: AppModel
     var body: some View {
         let ready = model.setupStepsLeft == 0
-        Button { model.selection = .setup } label: {
+        Button { if ready { model.selection = .setup } else { model.offerSetupInPlace() } } label: {
             HStack(spacing: 7) {
                 Circle().fill(ready ? Theme.success : Theme.warning).frame(width: 7, height: 7)
                 Text(ready ? "Ready" : !model.rosettaInstalled ? "Rosetta needed" : "Engine needed")
@@ -519,7 +519,7 @@ private struct EnginePill: View {
             .overlay(Capsule().strokeBorder(Theme.hairline))
         }
         .buttonStyle(.flat)
-        .help(ready ? "The game engine is installed" : "Open Setup to finish installing")
+        .help(ready ? "The game engine is installed" : "Click to install what games need")
     }
 }
 

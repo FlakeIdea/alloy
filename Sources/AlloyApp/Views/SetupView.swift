@@ -94,13 +94,7 @@ struct SetupView: View {
         }
     }
 
-    func installMessage(_ store: GameStore) -> String {
-        let how = store.installerArguments.isEmpty
-            ? "runs it there; follow its steps, then sign in."
-            : "installs it there. On first start it may download an update, then asks you to sign in."
-        let size = store == .steam ? " (about 2 MB)" : store == .ea ? " (about 2 MB)" : ""
-        return "Alloy downloads \(store.installerFileName)\(size) from \(store.vendor), makes a “\(store.environmentName)” environment on the game engine and \(how) Games you install there appear in your library."
-    }
+    func installMessage(_ store: GameStore) -> String { store.installMessage }
 
     /// Steam, Epic and the other stores: install each one's own app, and see whether this network lets it sign in.
     var storesCard: some View {
@@ -249,5 +243,16 @@ struct AdvancedView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+extension GameStore {
+    /// What installing this store's app does, for the question asked before it starts.
+    var installMessage: String {
+        let how = installerArguments.isEmpty
+            ? "runs it there; follow its steps, then sign in."
+            : "installs it there. On first start it may download an update, then asks you to sign in."
+        let size = self == .steam ? " (about 2 MB)" : self == .ea ? " (about 2 MB)" : ""
+        return "Alloy downloads \(installerFileName)\(size) from \(vendor), makes a “\(environmentName)” environment on the game engine and \(how) Games you install there appear in your library."
     }
 }

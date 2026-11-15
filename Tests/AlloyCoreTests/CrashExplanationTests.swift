@@ -79,3 +79,20 @@ import Testing
         #expect(cmd.environment["WINEPREFIX"] == prefix.path.path)
     }
 }
+
+@Suite struct ScaledFullscreenTests {
+    @Test func readsAndTurnsOnFullscreenWithoutDisplayModeChanges() throws {
+        let dir = TempDir()
+        let prefix = makeInitializedPrefix(in: dir)
+        let reg = prefix.path.appendingPathComponent("user.reg")
+        try Data("WINE REGISTRY Version 2\n\n[Software\\\\Wine\\\\Mac Driver] 1\n\"EmulateModeset\"=\"Y\"\n".utf8).write(to: reg)
+        #expect(!ScaledFullscreen.isOn(in: prefix))
+        // As Wine writes it after `reg add`.
+        try Data("WINE REGISTRY Version 2\n\n[Software\\\\Wine\\\\X11 Driver] 1794780000\n#time=1dd6c8c93f0fa26\n\"EmulateModeset\"=\"Y\"\n".utf8).write(to: reg)
+        #expect(ScaledFullscreen.isOn(in: prefix))
+        let cmd = ScaledFullscreen.turnOnCommand(like: LaunchCommand(executable: URL(fileURLWithPath: "/w/bin/wine"), arguments: ["game.exe"],
+                                                                     environment: ["WINEPREFIX": prefix.path.path]))
+        #expect(cmd.arguments == ["reg", "add", #"HKCU\Software\Wine\X11 Driver"#, "/v", "EmulateModeset", "/t", "REG_SZ", "/d", "Y", "/f"])
+        #expect(cmd.environment["WINEPREFIX"] == prefix.path.path)
+    }
+}

@@ -115,8 +115,17 @@ public enum FrameRateCap: Codable, Hashable, Sendable {
 /// shows it. The game still renders at its own resolution, so the frame rate only rises when the in-game resolution is
 /// lowered; at the same resolution the picture is sharper on a Retina display.
 public enum MetalFXSpatialUpscaling {
-    /// Factors offered in the app. A game that renders at the window's size reaches the Retina pixel size at 2×.
-    public static let factors: [Double] = [1.5, 2, 3]
+    /// Factors offered in the app: whole numbers only. A game that renders at the window's size reaches the Retina
+    /// pixel size at 2×.
+    ///
+    /// Wine's Mac driver enlarges a game's Metal layer to the display's pixels with a nearest-pixel filter. A whole
+    /// factor lands on those pixels one for one. A factor such as 1.5× does not: on a 2× Retina display one pixel in
+    /// every three is doubled, which makes text, edges and foliage look rough and grainy over the whole picture
+    /// (seen in BeamNG.drive at 1800×1169 → 2700×1753, and in a Direct3D 11 test picture at 1.5× against 2×).
+    public static let factors: [Double] = [2, 3]
+
+    /// The factor a saved setting is read as: a fractional one becomes the next whole number (1.5× → 2×).
+    public static func wholePixels(_ factor: Double) -> Double { validFactors.contains(factor) ? factor.rounded(.up) : factor }
     /// DXMT treats factors below 1 as 1. MetalFX on Apple silicon creates spatial scalers up to 4×.
     public static let validFactors: ClosedRange<Double> = 1...4
 
@@ -195,7 +204,8 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
         shaderCachePath = try c.decodeIfPresent(String.self, forKey: .shaderCachePath)
         forceDX11 = try c.decodeIfPresent(Bool.self, forKey: .forceDX11) ?? false
         dlss = try c.decodeIfPresent(Bool.self, forKey: .dlss) ?? false
-        metalFXSpatialFactor = try c.decodeIfPresent(Double.self, forKey: .metalFXSpatialFactor)
+        // 1.5× was offered until build 78; it reads as 2× now (see MetalFXSpatialUpscaling.factors).
+        metalFXSpatialFactor = try c.decodeIfPresent(Double.self, forKey: .metalFXSpatialFactor).map(MetalFXSpatialUpscaling.wholePixels)
         lowInputDelay = try c.decodeIfPresent(Bool.self, forKey: .lowInputDelay) ?? d.lowInputDelay
     }
 

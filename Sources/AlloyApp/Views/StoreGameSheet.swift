@@ -6,6 +6,7 @@ struct StoreGameSheet: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
+    @State private var confirmStore: GameStore?
 
     var body: some View {
         let link = StoreGameLink.parse(text)
@@ -13,12 +14,28 @@ struct StoreGameSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Install from Steam or Epic").font(.title2.bold())
             if stores.isEmpty {
-                Text("Install Steam or the Epic Games Launcher first, from Setup. Alloy sets each one up in its own environment, and games you install through it appear here.")
+                Text("Install Steam or the Epic Games Launcher first, right here. Alloy sets each one up in its own environment, and games you install through it appear in your library.")
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if !model.hasGameEngine {
+                    Label { Text("The game engine comes first: one download.") } icon: { Icon("exclamationmark.triangle") }
+                        .font(.callout).foregroundStyle(Theme.warning)
+                }
+                ForEach([GameStore.steam, .epic], id: \.self) { store in
+                    if let status = model.storeInstallStatus[store] {
+                        HStack(spacing: 6) { ProgressView().controlSize(.mini); Text(status).font(.callout).foregroundStyle(.secondary) }
+                    }
+                }
                 HStack {
                     Spacer()
                     Button("Cancel") { dismiss() }
-                    Button("Open Setup") { dismiss(); model.selection = .setup }.primaryAction(Theme.accent)
+                    if model.hasGameEngine {
+                        Button("Install Epic…") { confirmStore = .epic }.secondaryAction()
+                            .disabled(model.storeInstallStatus[.epic] != nil)
+                        Button("Install Steam…") { confirmStore = .steam }.primaryAction(Theme.accent)
+                            .disabled(model.storeInstallStatus[.steam] != nil)
+                    } else {
+                        Button("Install the Game Engine…") { dismiss(); model.offerSetupInPlace() }.primaryAction(Theme.accent)
+                    }
                 }
             } else {
                 Text("Paste the game's store page link or its Steam app ID. \(stores.map(\.displayName).joined(separator: " or ")) opens at the game: choose Install there. The store checks that you own it and downloads it; Alloy shows the progress and adds the game to your library when it's done.")
@@ -60,6 +77,13 @@ struct StoreGameSheet: View {
         }
         .padding(24)
         .frame(width: 540)
+        .alert("Install \(confirmStore?.displayName ?? "")?", isPresented: Binding(get: { confirmStore != nil }, set: { if !$0 { confirmStore = nil } }),
+               presenting: confirmStore) { store in
+            Button("Install") { model.installStore(store) }
+            Button("Cancel", role: .cancel) {}
+        } message: { store in
+            Text(store.installMessage)
+        }
         .onAppear { model.refreshStoreDownloads() }
     }
 

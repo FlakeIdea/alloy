@@ -28,9 +28,14 @@ Anything that needs a real Wine runtime is marked **unverified** until it has be
   (**unverified** without a Developer ID). The `.pkg` refuses Intel Macs and macOS before 14, shows the terms, installs the
   app, Rosetta 2 and the terms record, then opens Alloy (built and inspected; its postinstall dry-run tested; a real
   install is **unverified**: it needs an administrator password)
+- Setup where you are: when Rosetta 2 or the game engine is missing, the library and every game's page show a card
+  whose button installs everything there and shows the progress; pressing Play, the sidebar status, the Steam/Epic
+  sheet (which also installs Steam or Epic itself) and the Environments page ask on the spot instead of opening the
+  Setup page (built and checked in the app up to the question and the card; a full install from the card was
+  **not run**, it uses the same `SetupRunner` as the wizard)
 - Setup wizard (Welcome, Terms, Install, Ready). **Install Everything** checks the Mac and free space, installs
-  Rosetta 2 and the game engine, and downloads the Visual C++ and Wine Mono installers ahead. It opens on first launch,
-  at Install when something is missing (or after the `.pkg`, which showed the terms), and from Setup. Its `SetupRunner` was tested
+  Rosetta 2 and the game engine, and downloads the Visual C++ and Wine Mono installers ahead. It opens on first launch
+  (until the terms are accepted) and from Setup; it no longer opens by itself after that. Its `SetupRunner` was tested
   end to end with `alloyctl setup` in an empty home folder (engine from a local server)
 
 - Game stores in Setup: Steam, Epic Games Launcher, EA app, Ubisoft Connect, GOG Galaxy, Battle.net, each installed from

@@ -139,7 +139,7 @@ Without the identities you get unsigned files that only open on your own Mac.
 | Rosetta 2 | `postinstall` | Installed with `softwareupdate --install-rosetta --agree-to-license` if missing; a failure (for example offline) does not fail the install |
 | Terms | `postinstall` | Writes the accepted terms version to `/Library/Application Support/Alloy/AcceptedTerms`, so the app doesn't ask again |
 | Open | `postinstall` | Opens Alloy for the person at the screen (not for command-line or managed installs) |
-| Engine and components | Alloy | The setup wizard opens at its Install page, checks free space, then **Install Everything** downloads the game engine and the Visual C++ and Wine Mono installers, each checked against its checksum |
+| Engine and components | Alloy | The first page shows an **Install** card: it checks free space, then downloads the game engine and the Visual C++ and Wine Mono installers, each checked against its checksum |
 
 The wizard's Install page runs the same `SetupRunner` that `alloyctl setup <components.json URL>` runs, so you can check a
 release from Terminal. The installer's pages come from `alloyctl installer-pages`, which uses the same text as the app.

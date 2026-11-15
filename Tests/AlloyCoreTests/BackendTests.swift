@@ -309,6 +309,11 @@ import Testing
         var g = GraphicsConfiguration(); g.metalFXSpatialFactor = 3
         #expect(try JSONDecoder().decode(GraphicsConfiguration.self, from: JSONEncoder().encode(g)).metalFXSpatialFactor == 3)
         #expect(MetalFXSpatialUpscaling.displayName(1.5) == "1.5×" && MetalFXSpatialUpscaling.displayName(2) == "2×")
+        // Only whole factors are offered, and a saved 1.5× is read as 2×: a fractional factor lands unevenly on the
+        // display's pixels and looks grainy.
+        #expect(MetalFXSpatialUpscaling.factors == [2, 3])
+        #expect(try decode(#"{"metalFXSpatialFactor": 1.5}"#).metalFXSpatialFactor == 2)
+        #expect(try decode(#"{"metalFXSpatialFactor": 3}"#).metalFXSpatialFactor == 3)
 
         let warning = DiagnosticService.analyze(log: "warn:  MetalFX spatial scaler is not supported on this device")
         #expect(warning.contains { $0.title == "MetalFX upscaling is not active" })
