@@ -113,7 +113,6 @@ Until `ENGINE_BASE_URL` is set, no `components.json` is published and Alloy says
 
 ```bash
 ALLOY_VERSION=1.0 \
-ALLOY_STAGE=Beta \
 ALLOY_BUNDLE_ID=com.yourname.alloy \
 ALLOY_COMPONENTS_URL=https://github.com/<owner>/<repo>/releases/latest/download/components.json \
 ALLOY_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
