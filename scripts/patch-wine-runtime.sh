@@ -9,7 +9,8 @@
 #    Its H.264 decoder decodes to system memory when the game's Direct3D device has no NV12 textures (DXMT), so
 #    Unreal Engine 5's Electra player gets frames;
 #  - winemac.so, which keeps ProMotion displays at 120 Hz when a game asks for 60 Hz exclusive fullscreen, and keeps a
-#    cursor the game hid from coming back over it;
+#    cursor the game hid from coming back over it, and scales a game's picture smoothly when it is stretched to the
+#    screen by an uneven ratio (fullscreen at a resolution other than the display's);
 #  - ntdll.so, which starts each Windows program from a small app bundle in the games category, so macOS turns on
 #    Game Mode for it.
 #

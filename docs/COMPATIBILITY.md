@@ -54,6 +54,22 @@ between the apps. The active layer was confirmed by the libraries loaded in the 
 - Many runs in both apps ended with Superposition's own "Benchmark stopped" (it stops on input or focus change); only
   complete runs are listed.
 
+### Superposition rerun on engine -7 (2026-11-16)
+
+Same benchmark and settings as above (1800×1169 confirmed in Superposition's log), engine `dxmt-0.80-cx26.3-7`,
+Alloy's defaults (MSync), on the charger, low input delay on and off alternating. CrossOver is no longer installed on
+the test Mac, so it was not rerun.
+
+| Alloy setting | Runs (avg FPS) | Mean | Min | Max |
+|---|---|---|---|---|
+| Low input delay on (default, 1 frame queued) | 37.6, 38.0 | **37.8** | 32.2 | 46.6 |
+| Low input delay off (3 frames queued) | 35.9 | 35.9 | 30.9 | 43.5 |
+
+The same as on 2026-10-31 (38.3) within run-to-run spread: this test is GPU-bound, and the engine changes since then
+(32-bit math, registry saves, frame queue) don't touch it. Low input delay costs no frame rate here. Of ten runs, seven
+ended within about 20 s of starting with Superposition's "Benchmark stopped" (it stops on input or focus change) and
+are excluded; the cause was not found. Published on flake.co.in/alloy/benchmarks/.
+
 ### Expectations, not results
 
 * Both games are Unreal Engine titles that default to DX12, with a `-dx11` fallback.
@@ -732,8 +748,8 @@ Measured with engine `dxmt-0.80-cx26.3-7` and a Direct3D 11 test in exclusive fu
 | Pointer at (639, 666) on the Mac | | reported at (537, 541): scaled and offset for the bars |
 
 Not tested: BeamNG.drive itself or any other game; an external display; the Game Porting Toolkit's Wine 7.7, which
-ignores the setting. The scaling to the screen uses a nearest-pixel filter (see below), so a fullscreen resolution
-that is not a whole fraction of the desktop's looks slightly rough; the desktop's own resolution looks best.
+ignores the setting. With engines up to -7 the scaling to the screen uses a nearest-pixel filter (see below), so a
+fullscreen resolution that is not a whole fraction of the desktop's looks rough; engine -8 scales those smoothly.
 
 ### MetalFX upscaling: whole factors only (2026-11-16)
 
@@ -745,8 +761,28 @@ is doubled, over the whole picture. A Direct3D 11 test picture (text, thin lines
 and 2× showed the uneven edges at 1.5× and clean ones at 2×.
 
 Alloy now offers 2× and 3× only, and a saved 1.5× is read as 2×. The cost is the larger MetalFX output (about 2 ms
-of GPU time per frame at full Retina size); the game still renders at its own resolution. A smooth filter for
-in-between sizes would need a change in the engine's Mac driver and is not done.
+of GPU time per frame at full Retina size); the game still renders at its own resolution. Engine -8 (below) adds the
+smooth filter for in-between sizes; the 1.5× choice stays off because older engines lack it.
+
+### Smooth scaling at in-between fullscreen resolutions: engine dxmt-0.80-cx26.3-8 (2026-11-16)
+
+A game in fullscreen at a resolution other than the desktop's is drawn at that resolution and stretched over the
+screen by Core Animation. Wine's Metal layer used nearest-pixel filtering, so at an uneven ratio some rows and
+columns were doubled and others not, and text and edges looked grainy. `patches/wine/0013` makes the layer choose its
+filter whenever the drawable, the layer or the window's backing scale changes: linear for uneven ratios, nearest for
+whole-number ratios, where it is exact. It covers DXMT, D3DMetal and MoltenVK, which all draw into that layer.
+Engine -8 is -7 with only `winemac.so` rebuilt.
+
+Measured with the Direct3D 11 fullscreen test (text, thin lines, checker and noise patches) on the 1800×1169 desktop
+(3600×2338 pixels), `EmulateModeset` on, -7 against -8:
+
+| Game resolution | Ratio | -7 | -8 |
+|---|---|---|---|
+| 1280×800 | 2.81 | uneven, blocky strokes on text and lines | smooth text and lines |
+| 1800×1169 | 2 | sharp | sharp; the whole capture is byte-identical to -7's |
+
+Both ran 840 frames in 7 s without errors. Not tested: any real game, D3DMetal or MoltenVK games, an external
+display.
 
 ### D3DMetal in the graphics backend list (2026-11-16)
 

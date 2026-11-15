@@ -1,0 +1,84 @@
+Alloy: winemac.drv: smooth scaling when a game's picture is stretched by an uneven ratio.
+
+A game in fullscreen at a resolution other than the display's (with Wine's emulated display modes, which Alloy turns
+on) draws at that resolution, and Core Animation stretches its Metal drawable over the screen. Wine's Metal layer
+used nearest filtering for that, so at a ratio such as 1800 pixels onto 3024 some rows and columns were doubled and
+others not, and text and edges looked grainy. The same happened to a picture upscaled by a fractional factor.
+
+The layer now chooses its filter from the drawable's size, its own size and the window's backing scale whenever one
+of them changes: linear filtering for uneven ratios, nearest for whole-number ratios (1x, 2x, 3x), where nearest is
+exact and stays sharp. This covers DXMT, D3DMetal and MoltenVK, which all draw into this layer.
+
+Licence: LGPL-2.1-or-later, like Wine.
+
+--- a/dlls/winemac.drv/d3dmetal_objc.m	2026-11-16 03:32:42
++++ b/dlls/winemac.drv/d3dmetal_objc.m	2026-11-16 03:33:03
+@@ -70,6 +70,68 @@
+         return [super nextDrawable];
+     }
+ 
++    /* Alloy: pick the scaling filter from how the drawable maps onto the screen. A game in fullscreen at a
++     * resolution other than the display's (Wine's emulated display modes), or one upscaled by a fractional factor,
++     * has its drawable stretched onto the screen by an uneven ratio, such as 1800 pixels onto 3024. With nearest
++     * filtering that drops or doubles single rows and columns, which makes text and edges look grainy. Linear
++     * filtering is used for those; nearest stays for whole-number ratios (1x, 2x, 3x), where it is exact.
++     */
++    - (void) alloyUpdateScalingFilter
++    {
++        CGSize drawable = self.drawableSize;
++        CGSize bounds = self.bounds.size;
++        CGFloat scale = 0, rx, ry;
++        BOOL whole;
++
++        /* Graphics libraries may size the drawable from their own threads; the window is read on the main one. */
++        if (![NSThread isMainThread])
++        {
++            dispatch_async(dispatch_get_main_queue(), ^{ [self alloyUpdateScalingFilter]; });
++            return;
++        }
++        if ([self.delegate isKindOfClass:[NSView class]])
++            scale = [[(NSView *)self.delegate window] backingScaleFactor];
++        if (scale <= 0)
++            scale = [[NSScreen mainScreen] backingScaleFactor];
++        if (scale <= 0)
++            scale = 1;
++        if (drawable.width < 1 || drawable.height < 1 || bounds.width < 1 || bounds.height < 1)
++            return;
++
++        rx = bounds.width * scale / drawable.width;
++        ry = bounds.height * scale / drawable.height;
++        whole = rx >= 0.995 && ry >= 0.995 && fabs(rx - round(rx)) < 0.005 && fabs(ry - round(ry)) < 0.005;
++        NSString *filter = whole ? kCAFilterNearest : kCAFilterLinear;
++        if (![self.magnificationFilter isEqualToString:filter])
++            [super setMagnificationFilter:filter];
++        if (![self.minificationFilter isEqualToString:kCAFilterLinear])
++            [super setMinificationFilter:kCAFilterLinear];
++    }
++
++    - (void) setDrawableSize:(CGSize)size
++    {
++        [super setDrawableSize:size];
++        [self alloyUpdateScalingFilter];
++    }
++
++    - (void) setBounds:(CGRect)bounds
++    {
++        [super setBounds:bounds];
++        [self alloyUpdateScalingFilter];
++    }
++
++    - (void) setContentsScale:(CGFloat)scale
++    {
++        [super setContentsScale:scale];
++        [self alloyUpdateScalingFilter];
++    }
++
++    - (void) setMagnificationFilter:(NSString *)filter
++    {
++        [super setMagnificationFilter:filter];
++        [self alloyUpdateScalingFilter];
++    }
++
+ @end
+ 
+ #endif
