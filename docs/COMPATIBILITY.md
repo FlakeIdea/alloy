@@ -692,10 +692,19 @@ So hardware ray tracing works end to end for a Windows program on this Mac throu
 simple and parallel; a game's rays cost far more. Still not tested: any game, and D3DMetal layered on Alloy's own
 engine (the test used the Game Porting Toolkit app's Wine 7.7).
 
-### The ray tracing tag (added 2026-11-15)
+### The Alloy Ray Tracing tag (2026-11-15)
 
-A game that is given the ray tracing hardware carries Alloy's ray tracing tag: "RT" on its cover in the library and
-"RAY TRACING" beside its status on its page, in black, white and grey like the rest of Alloy. It appears when the
-game uses DirectX 12 (from Alloy's scan of its files), runs on D3DMetal on an M3 or later, and has its ray tracing
-switch on. It says what Alloy gives the game; whether the game draws with ray tracing is the game's own setting,
-which Alloy can't see.
+A game that is given the ray tracing hardware carries Alloy's tag: the Flake mark in white on a black pill, with
+"Alloy Ray Tracing" beside it. Black and white only. It applies when the game uses DirectX 12 (from Alloy's scan of
+its files), runs on D3DMetal on an M3 or later, and has its ray tracing switch on.
+
+- **Over the game as it starts.** Five seconds after launch a clear, click-through panel in the top left corner of
+  the main screen plays the tag's arrival (the pill pops up with the mark alone, its feathers land one after another
+  and the beak last, then the mark moves aside as the words open out), rests, and fades after about five seconds.
+  The panel sits above other windows, never takes focus and ignores the mouse. Settings > Playing turns it off. It is
+  timed from the launch, not from the game's first frame, which Alloy can't see.
+- **On the game's page**, beside the status, with the same arrival; **on its cover** in the library, the mark alone.
+
+Checked: the panel was opened from the built app, appeared at the top left at screen-saver level, and removed itself.
+Not checked: over a running game, and over a game in exclusive fullscreen, where macOS may keep other windows off
+the screen. The tag says what Alloy gives the game; whether the game draws with ray tracing is its own setting.

@@ -196,6 +196,8 @@ private struct WizardOverlay: View {
 enum SnapshotMode {
     static func runIfRequested(model: AppModel) async {
         if ProcessInfo.processInfo.environment["ALLOY_TIMING"] != nil { await timeTabs(model: model); return }
+        // Development aid: `ALLOY_SHOW_RT_OVERLAY=1` plays the ray tracing overlay shortly after Alloy opens.
+        if ProcessInfo.processInfo.environment["ALLOY_SHOW_RT_OVERLAY"] != nil { RayTracingOverlay.shared.show(after: 1.5, for: 6) }
         guard let dir = ProcessInfo.processInfo.environment["ALLOY_SNAPSHOT_DIR"] else { return }
         try? await Task.sleep(for: .seconds(2))
         var pages: [(String, () -> Void)] = SidebarItem.allCases.map { item in (item.rawValue, { model.selection = item }) }

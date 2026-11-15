@@ -21,6 +21,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var checkForUpdates: Bool
     /// While a game plays, Steam in its environment runs at background priority (`SteamBackground`).
     public var steamInBackground: Bool
+    /// When a game that is given ray tracing hardware starts, Alloy's ray tracing tag shows over it for a few seconds.
+    public var rayTracingOverlay: Bool
     /// Copy each environment's game saves before Alloy changes it (`SaveBackups`). Nil until the person has been asked;
     /// backups are made meanwhile.
     public var backupSaves: Bool?
@@ -54,6 +56,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         metricsShortcut = true
         checkForUpdates = true
         steamInBackground = true
+        rayTracingOverlay = true
         backupSaves = nil
     }
 
@@ -72,6 +75,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         metricsShortcut = try c.decodeIfPresent(Bool.self, forKey: .metricsShortcut) ?? true
         checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? true
         steamInBackground = try c.decodeIfPresent(Bool.self, forKey: .steamInBackground) ?? true
+        rayTracingOverlay = try c.decodeIfPresent(Bool.self, forKey: .rayTracingOverlay) ?? true
         backupSaves = try c.decodeIfPresent(Bool.self, forKey: .backupSaves)
     }
 }

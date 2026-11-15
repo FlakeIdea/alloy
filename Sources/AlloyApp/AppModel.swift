@@ -1516,6 +1516,9 @@ final class AppModel: ObservableObject {
     private func track(_ session: LaunchSession, id: UUID, onExit: @escaping @MainActor (LaunchSession) -> Void) {
         sessions[id] = session
         states[id] = session.state
+        if settings.rayTracingOverlay, session.state.isRunning, let game = game(id), offersRayTracing(game) {
+            RayTracingOverlay.shared.show()
+        }
         logs[id] = session.lines
         findings[id] = nil
         Task {
