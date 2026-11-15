@@ -6,7 +6,7 @@ Apple Metal) and other open-source components, with optional support for Apple's
 Alloy is not affiliated with CodeWeavers, Apple, Microsoft or Valve, and contains no CrossOver or D3DMetal code. It is not an Android
 emulator and is not related to other products named Alloy.
 
-New here? See [how to play Windows games on a Mac](https://flake.co.in/alloy/play-windows-games-on-mac/).
+New here? See [how to play Windows games on a Mac](https://flake.co.in/alloy/macgaming/).
 
 **Download:** [flake.co.in/alloy](https://flake.co.in/alloy/) · **Game engine releases and their source:** [FlakeIdea/alloy-engine](https://github.com/FlakeIdea/alloy-engine/releases) · **Help:** support@flake.co.in
 
