@@ -159,7 +159,10 @@ struct GameHero<Controls: View>: View {
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.white.opacity(0.12)))
                     .shadow(color: .black.opacity(0.5), radius: 18, y: 8)
                 VStack(alignment: .leading, spacing: 10) {
-                    StatusPill(state: state)
+                    HStack(spacing: 8) {
+                        StatusPill(state: state)
+                        if model.offersRayTracing(game) { RayTracingTag() }
+                    }
                     Text(game.name).font(.system(size: 36, weight: .heavy)).tracking(-0.9).lineLimit(2)
                     controls.padding(.top, 4)
                 }

@@ -362,6 +362,11 @@ final class AppModel: ObservableObject {
         runtime(for: game).map { backend.capabilities(of: $0) }
     }
 
+    /// The game gets the Mac's ray tracing hardware, so its cover and page carry the ray tracing tag.
+    func offersRayTracing(_ game: Game) -> Bool {
+        RayTracing.isOffered(to: game, capabilities: capabilities(for: game), traits: traits[game.id])
+    }
+
     func state(of id: UUID) -> LaunchState { states[id] ?? .idle }
 
     // MARK: Runtimes & prefixes

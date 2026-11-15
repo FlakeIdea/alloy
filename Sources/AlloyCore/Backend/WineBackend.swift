@@ -443,11 +443,23 @@ public enum LargeAddressSpace {
 /// Measured on an M4 with D3DMetal 3.0 and a DirectX 12 test program: `D3DM_SUPPORT_DXR=1` (and unset) reports
 /// raytracing tier 1.1, feature level 12_2 and shader model 6.6, and bottom- and top-level acceleration structures
 /// for 80,000 triangles were built on the GPU in 34 to 58 ms; with `D3DM_SUPPORT_DXR=0` the tier is "not supported".
-/// Tracing rays from a shader, and any game, are not tested yet.
+/// Rays were then traced and every result checked, with shaders built by Microsoft's shader compiler: inline ray queries
+/// (DXR 1.1) and a `DispatchRays` pipeline with ray generation, closest hit and miss shaders (DXR 1.0) each gave
+/// 40,000 hits and 25,536 misses for 65,536 rays over and around the scene, as it must, and about 600 million rays a
+/// second for 4 million simple rays. No game is tested yet.
 public enum RayTracing {
     public static let variable = "D3DM_SUPPORT_DXR"
-    public static let help = "Lets DirectX 12 games use this Mac's ray tracing hardware through D3DMetal, so the game offers its ray tracing options. Checked with a test program, which was offered DirectX Raytracing 1.1 and built its ray tracing structures on the graphics chip; no game has been tested yet. Ray tracing costs a lot of frame rate: turn it on in the game's own settings, start with the lowest level, and use MetalFX upscaling. Turn this off if a DirectX 12 game crashes or draws wrongly."
+    public static let help = "Lets DirectX 12 games use this Mac's ray tracing hardware through D3DMetal, so the game offers its ray tracing options. Checked with a test program that traced rays both ways games do and got every result right; no game has been tested yet. Ray tracing costs a lot of frame rate: turn it on in the game's own settings, start with the lowest level, and use MetalFX upscaling. Turn this off if a DirectX 12 game crashes or draws wrongly."
     public static let needsD3DMetal = "Ray tracing: this Mac's graphics chip can trace rays, but games ask for it through DirectX 12, which this game's graphics path (DXMT, DirectX 10 and 11) doesn't have. It needs a DirectX 12 game on Apple's D3DMetal, which you add yourself from the Game Porting Toolkit."
+
+    public static let tagHelp = "Ray tracing hardware is on for this game: it is a DirectX 12 game on D3DMetal, which passes ray tracing to this Mac's graphics chip. Turn ray tracing on in the game's own settings. A game without ray tracing options looks the same."
+
+    /// Whether the game is given the Mac's ray tracing hardware, which is when Alloy shows its ray tracing tag: a
+    /// DirectX 12 game, on a graphics path that has ray tracing on this Mac, with the game's switch on.
+    public static func isOffered(to game: Game, capabilities: BackendCapabilities?, traits: GameTraits?) -> Bool {
+        guard game.rayTracing, !game.isApp, let capabilities, let traits else { return false }
+        return capabilities.rayTracing.contains(game.graphics.backend) && traits.usage.contains(.d3d12)
+    }
 
     /// "Apple M4 Pro" → true, "Apple M2" → false: hardware ray tracing came with the M3.
     public static func chipHasHardwareRayTracing(brand: String) -> Bool {

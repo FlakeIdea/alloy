@@ -76,6 +76,29 @@ import Testing
         #expect(!RayTracing.chipHasHardwareRayTracing(brand: "VirtualApple @ 2.50GHz"))
     }
 
+    /// The tag is for DirectX 12 games that are given ray tracing hardware, and for nothing else.
+    @Test func rayTracingTagIsForDirectX12GamesWithItOn() {
+        let dir = TempDir()
+        var caps = WineBackend().capabilities(of: makeFakeRuntime(in: dir))
+        var game = makeGame(in: dir)
+        game.graphics.backend = .d3dMetal
+        let dx12 = GameTraits(usage: [.d3d11, .d3d12], machine: .x64), dx11 = GameTraits(usage: [.d3d11], machine: .x64)
+        #expect(!RayTracing.isOffered(to: game, capabilities: caps, traits: dx12))   // this engine has no ray tracing
+        caps.rayTracing = [.d3dMetal]
+        #expect(RayTracing.isOffered(to: game, capabilities: caps, traits: dx12))
+        #expect(!RayTracing.isOffered(to: game, capabilities: caps, traits: dx11))   // not a DirectX 12 game
+        #expect(!RayTracing.isOffered(to: game, capabilities: caps, traits: nil))    // not scanned yet
+        #expect(!RayTracing.isOffered(to: game, capabilities: nil, traits: dx12))
+        game.graphics.backend = .dxmt
+        #expect(!RayTracing.isOffered(to: game, capabilities: caps, traits: dx12))   // DXMT has none
+        game.graphics.backend = .d3dMetal
+        game.rayTracing = false
+        #expect(!RayTracing.isOffered(to: game, capabilities: caps, traits: dx12))   // switched off
+        game.rayTracing = true
+        game.isApp = true
+        #expect(!RayTracing.isOffered(to: game, capabilities: caps, traits: dx12))
+    }
+
     /// Ray tracing is D3DMetal's alone; the switch is passed either way so the game follows it.
     @Test func rayTracingSwitchReachesD3DMetal() throws {
         let dir = TempDir()

@@ -621,6 +621,9 @@ struct CoverCard: View {
                         .help("Play \(game.name)")
                     }
                 }
+                .overlay(alignment: .topTrailing) {
+                    if model.offersRayTracing(game) { RayTracingTag(size: .compact).padding(8) }
+                }
                 .overlay(alignment: .topLeading) {
                     if running {
                         HStack(spacing: 5) { Circle().fill(Theme.success).frame(width: 6, height: 6); Text("PLAYING") }

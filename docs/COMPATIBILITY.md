@@ -676,3 +676,26 @@ Not tested: tracing rays from a shader (that needs a DirectX shader compiler to 
 this Mac doesn't have), any game, D3DMetal layered on Alloy's own engine, and the frame rate with ray tracing on.
 Superposition ran at about 38 fps without ray tracing on this Mac, so expect ray tracing to need low settings and
 MetalFX upscaling.
+
+### Rays traced and checked (2026-11-15)
+
+With Microsoft's DirectX Shader Compiler 1.9.2609 (run under Wine) two shaders were compiled and run on the M4
+through D3DMetal 3.0, `D3DM_SUPPORT_DXR=1`, against a scene of 80,000 triangles. Every ray's result was read back
+and compared with what the scene must give:
+
+| Way of tracing | 256 × 256 rays over and around the scene | 2048 × 2048 rays, all over the scene |
+|---|---|---|
+| Inline ray queries in a compute shader (DXR 1.1, shader model 6.5) | 40,000 hits, 25,536 misses, 0 wrong | 4,194,304 hits, 0 wrong, 6.5 ms (about 650 million rays per second) |
+| Ray tracing pipeline with `DispatchRays`: ray generation, closest hit and miss shaders (DXR 1.0, library 6.3) | 40,000 hits, 25,536 misses, 0 wrong | 4,194,304 hits, 0 wrong, 7.0 ms (about 600 million rays per second) |
+
+So hardware ray tracing works end to end for a Windows program on this Mac through D3DMetal. The rays here are
+simple and parallel; a game's rays cost far more. Still not tested: any game, and D3DMetal layered on Alloy's own
+engine (the test used the Game Porting Toolkit app's Wine 7.7).
+
+### The ray tracing tag (added 2026-11-15)
+
+A game that is given the ray tracing hardware carries Alloy's ray tracing tag: "RT" on its cover in the library and
+"RAY TRACING" beside its status on its page, in black, white and grey like the rest of Alloy. It appears when the
+game uses DirectX 12 (from Alloy's scan of its files), runs on D3DMetal on an M3 or later, and has its ray tracing
+switch on. It says what Alloy gives the game; whether the game draws with ray tracing is the game's own setting,
+which Alloy can't see.
