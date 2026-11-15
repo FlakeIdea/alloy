@@ -28,7 +28,7 @@ usage:
   alloyctl components <prefix-id> <exe-path>
   alloyctl install-runtime <components.json URL> [package-id]
   alloyctl install-game <prefix-id> <setup.exe|setup.msi> <name>
-  alloyctl run <prefix-id> <exe-path> [--graphics <backend>] [--hud | --metrics-hidden] [--no-avx] [--sync default|off|esync|msync] [--dlss] [--metalfx <factor>] [--dx11] [--queued-frames-default] [--scroll-speed <percent>] [--no-large-address] [--runtime <wine-binary>] [--fps-cap display|off|<n>] [--shader-cache <game-id>] [--timeout <s>] [--env K=V]... [-- <args>...]
+  alloyctl run <prefix-id> <exe-path> [--graphics <backend>] [--hud | --metrics-hidden] [--no-avx] [--sync default|off|esync|msync] [--dlss] [--metalfx <factor>] [--dx11] [--queued-frames-default] [--scroll-speed <percent>] [--no-large-address] [--no-ray-tracing] [--runtime <wine-binary>] [--fps-cap display|off|<n>] [--shader-cache <game-id>] [--timeout <s>] [--env K=V]... [-- <args>...]
 graphics backends: \(GraphicsBackendKind.allCases.map(\.rawValue).joined(separator: ", "))
 """
 
@@ -324,6 +324,7 @@ do {
         var runtimeOverride: URL?
         var scrollSpeed = ScrollSpeed.standard
         var largeAddressSpace = true
+        var rayTracing = true
         var programArgs: [String] = []
         var i = 2
         while i < args.count {
@@ -352,6 +353,7 @@ do {
                 scrollSpeed = percent
             case "--no-avx": graphics.advertiseAVX = false
             case "--no-large-address": largeAddressSpace = false
+            case "--no-ray-tracing": rayTracing = false
             case "--sync":
                 i += 1
                 guard i < args.count, let mode = SyncMode(rawValue: args[i]) else { fail(usage) }
@@ -389,6 +391,7 @@ do {
                         environment: env, graphics: graphics)
         game.scrollSpeedPercent = scrollSpeed
         game.largeAddressSpace = largeAddressSpace
+        game.rayTracing = rayTracing
         let r = runtimeOverride.map { backend.makeRuntime(kind: .custom, binary: $0, root: $0.deletingLastPathComponent().deletingLastPathComponent()) }
             ?? runtime(for: p)
         if graphics.metalFXSpatialFactor != nil && !backend.capabilities(of: r).metalFXSpatialUpscaling.contains(graphics.backend) {

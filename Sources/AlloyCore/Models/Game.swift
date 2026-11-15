@@ -30,6 +30,9 @@ public struct Game: Codable, Identifiable, Hashable, Sendable {
     public var scrollSpeedPercent = ScrollSpeed.standard
     /// A 32-bit game may use 4 GB of memory instead of 2 GB (`LargeAddressSpace`). On unless the person turns it off.
     public var largeAddressSpace = true
+    /// DirectX 12 games are offered the Mac's ray tracing hardware where the graphics path has it (`RayTracing`).
+    /// On unless the person turns it off.
+    public var rayTracing = true
 
     public init(id: UUID = UUID(),
                 name: String,
@@ -78,6 +81,7 @@ public struct Game: Codable, Identifiable, Hashable, Sendable {
         customDLLs = try c.decodeIfPresent([CustomDLL].self, forKey: .customDLLs) ?? []
         scrollSpeedPercent = try c.decodeIfPresent(Int.self, forKey: .scrollSpeedPercent) ?? ScrollSpeed.standard
         largeAddressSpace = try c.decodeIfPresent(Bool.self, forKey: .largeAddressSpace) ?? true
+        rayTracing = try c.decodeIfPresent(Bool.self, forKey: .rayTracing) ?? true
     }
 
     public var executableURL: URL {

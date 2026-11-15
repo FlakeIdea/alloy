@@ -208,13 +208,15 @@ public struct WineBackend: CompatibilityBackend {
         if SystemCheck.isAppleSilicon, runtime.hasNVNGX && runtime.hasD3DMetal { upscaling.insert(.d3dMetal) }
         if SystemCheck.isAppleSilicon, runtime.hasNVNGX && runtime.hasDXMT { upscaling.insert(.dxmt) }
         let frameGeneration: Set<GraphicsBackendKind> = upscaling.contains(.d3dMetal) && runtime.hasFrameInterpolation ? [.d3dMetal] : []
-        return BackendCapabilities(graphics: graphics, syncModes: sync, supportsMetalHUD: true,
+        var caps = BackendCapabilities(graphics: graphics, syncModes: sync, supportsMetalHUD: true,
                                    supportsAVXAdvertisement: runtime.requiresRosetta, notes: notes,
                                    metalFXUpscaling: upscaling, metalFXFrameGeneration: frameGeneration,
                                    metalFXSpatialUpscaling: runtime.hasDXMT ? [.dxmt] : [],
                                    lowInputDelay: runtime.hasDXMT && runtime.hasFrameLatencyOption ? [.dxmt] : [],
                                    scrollSpeed: runtime.hasScrollSpeedOption,
                                    largeAddressSpace: runtime.hasLargeAddressOption)
+        if runtime.hasD3DMetal && RayTracing.thisMacHasHardwareRayTracing { caps.rayTracing = [.d3dMetal] }
+        return caps
     }
 
     // MARK: Commands
@@ -353,6 +355,8 @@ public struct WineBackend: CompatibilityBackend {
             env[ScrollSpeed.variable] = String(game.scrollSpeedPercent)
         }
         if info.machine == .x86 && game.largeAddressSpace && caps.largeAddressSpace { env[LargeAddressSpace.variable] = "1" }
+        // Said either way, so the game's ray tracing options follow the switch and not D3DMetal's default for the chip.
+        if caps.rayTracing.contains(g.backend) { env[RayTracing.variable] = game.rayTracing ? "1" : "0" }
         if runtime.hasGStreamer { env.merge(VideoPlayback.environment(for: runtime)) { _, new in new } }
         // Shown from the start when the game asks for it; otherwise loaded for the shortcut and hidden as it appears.
         // Loaded for the metrics shortcut, the HUD starts hidden; it starts shown when the game is set to show it.
@@ -430,6 +434,35 @@ public enum ScrollSpeed {
 public enum LargeAddressSpace {
     public static let variable = "WINE_LARGE_ADDRESS_AWARE"
     public static let help = "Lets a 32-bit game use up to 4 GB of memory instead of 2 GB, which helps older games that crash or run out of memory with mods or high-resolution textures. 64-bit games already have plenty and aren't affected. Turn it off only if a 32-bit game misbehaves with it."
+}
+
+/// Hardware ray tracing for DirectX 12 games. Windows games ask for it through DirectX Raytracing (DXR), which only
+/// Apple's D3DMetal translates to Metal's ray tracing; DXMT (DirectX 10 and 11, with DirectX 12 unfinished and without
+/// DXR in its unreleased code) and MoltenVK have none. Apple's graphics chips trace rays in hardware from the M3 on.
+///
+/// Measured on an M4 with D3DMetal 3.0 and a DirectX 12 test program: `D3DM_SUPPORT_DXR=1` (and unset) reports
+/// raytracing tier 1.1, feature level 12_2 and shader model 6.6, and bottom- and top-level acceleration structures
+/// for 80,000 triangles were built on the GPU in 34 to 58 ms; with `D3DM_SUPPORT_DXR=0` the tier is "not supported".
+/// Tracing rays from a shader, and any game, are not tested yet.
+public enum RayTracing {
+    public static let variable = "D3DM_SUPPORT_DXR"
+    public static let help = "Lets DirectX 12 games use this Mac's ray tracing hardware through D3DMetal, so the game offers its ray tracing options. Checked with a test program, which was offered DirectX Raytracing 1.1 and built its ray tracing structures on the graphics chip; no game has been tested yet. Ray tracing costs a lot of frame rate: turn it on in the game's own settings, start with the lowest level, and use MetalFX upscaling. Turn this off if a DirectX 12 game crashes or draws wrongly."
+    public static let needsD3DMetal = "Ray tracing: this Mac's graphics chip can trace rays, but games ask for it through DirectX 12, which this game's graphics path (DXMT, DirectX 10 and 11) doesn't have. It needs a DirectX 12 game on Apple's D3DMetal, which you add yourself from the Game Porting Toolkit."
+
+    /// "Apple M4 Pro" → true, "Apple M2" → false: hardware ray tracing came with the M3.
+    public static func chipHasHardwareRayTracing(brand: String) -> Bool {
+        guard let range = brand.range(of: "Apple M") else { return false }
+        let digits = brand[range.upperBound...].prefix { $0.isNumber }
+        return (Int(digits) ?? 0) >= 3
+    }
+
+    public static let thisMacHasHardwareRayTracing: Bool = {
+        var size = 0
+        guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0 else { return false }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0) == 0 else { return false }
+        return chipHasHardwareRayTracing(brand: String(cString: buffer))
+    }()
 }
 
 /// Low input delay: the game may queue only one frame ahead of the GPU instead of three (DXMT's default), so what the

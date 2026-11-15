@@ -642,3 +642,37 @@ iPhone hotspot, which may not behave like a home router, so this isn't a verdict
 size at its default (512 frames, 10.7 ms at 48 kHz). A silent event-driven stream on the built-in speakers at 48 kHz,
 writing one period per wake-up for 15 seconds: 1501 wake-ups, the buffer never ran dry, longest gap 12 ms. Their
 report concerns Bluetooth headsets and USB microphones, which weren't tested.
+
+## Hardware ray tracing (checked 2026-11-15)
+
+Windows games ask for ray tracing through DirectX Raytracing (DXR), part of DirectX 12, or through Vulkan's ray
+tracing extensions. Apple's graphics chips trace rays in hardware from the M3 on. What can carry a game's request
+to Metal on this engine:
+
+| Path | Ray tracing |
+|---|---|
+| DXMT 0.80 (DirectX 10/11) | None: no DirectX 12 |
+| DXMT unreleased code (DirectX 12 in progress, 408 commits after 0.80) | None: the device stops at `ID3D12Device4` and the command list at `ID3D12GraphicsCommandList2`; DXR needs `Device5` and `CommandList4` |
+| MoltenVK 1.4 (Vulkan) | None: only `VK_KHR_deferred_host_operations`; the acceleration structure work has been an open draft since 2025 |
+| Wine's vkd3d (DirectX 12 on Vulkan) | None, and it sits on MoltenVK |
+| Apple's D3DMetal (DirectX 11/12), supplied by the person | **Yes** |
+
+Measured on the M4 with D3DMetal 3.0 (the Game Porting Toolkit app's own Wine 7.7) and a DirectX 12 program written
+for the test:
+
+| `D3DM_SUPPORT_DXR` | Raytracing tier reported | Acceleration structures for 80,000 triangles |
+|---|---|---|
+| not set | 1.1 | built on the GPU, 58 ms |
+| `1` | 1.1 | built on the GPU, 34 ms |
+| `0` | not supported | — |
+
+The device also reports feature level 12_2 and shader model 6.6. The bottom-level structure took 7.6 MB.
+
+Alloy now has a "Hardware ray tracing (DirectX 12 games)" switch in a game's advanced settings, shown when the game
+uses D3DMetal on an M3 or later, on by default; it passes `D3DM_SUPPORT_DXR=1` or `0`, so the game's ray tracing
+options follow the switch. For a game on DXMT the page says why it has none.
+
+Not tested: tracing rays from a shader (that needs a DirectX shader compiler to make the test's DXIL shader, which
+this Mac doesn't have), any game, D3DMetal layered on Alloy's own engine, and the frame rate with ray tracing on.
+Superposition ran at about 38 fps without ray tracing on this Mac, so expect ray tracing to need low settings and
+MetalFX upscaling.

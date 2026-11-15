@@ -66,6 +66,43 @@ import Testing
         #expect(!caps.status(of: .d3dMetal).isUsable)
     }
 
+    @Test func rayTracingNeedsAnM3OrLater() {
+        #expect(RayTracing.chipHasHardwareRayTracing(brand: "Apple M4"))
+        #expect(RayTracing.chipHasHardwareRayTracing(brand: "Apple M3 Max"))
+        #expect(RayTracing.chipHasHardwareRayTracing(brand: "Apple M10 Pro"))
+        #expect(!RayTracing.chipHasHardwareRayTracing(brand: "Apple M2 Ultra"))
+        #expect(!RayTracing.chipHasHardwareRayTracing(brand: "Apple M1"))
+        #expect(!RayTracing.chipHasHardwareRayTracing(brand: "Intel(R) Core(TM) i9-9980HK CPU @ 2.40GHz"))
+        #expect(!RayTracing.chipHasHardwareRayTracing(brand: "VirtualApple @ 2.50GHz"))
+    }
+
+    /// Ray tracing is D3DMetal's alone; the switch is passed either way so the game follows it.
+    @Test func rayTracingSwitchReachesD3DMetal() throws {
+        let dir = TempDir()
+        let backend = WineBackend()
+        let d3dMetal = makeFakeRuntime(in: dir, d3dMetal: true, kind: .gamePortingToolkit)
+        let plain = makeFakeRuntime(in: TempDir())
+        #expect(backend.capabilities(of: plain).rayTracing.isEmpty)
+        let caps = backend.capabilities(of: d3dMetal)
+        #expect(caps.rayTracing == (RayTracing.thisMacHasHardwareRayTracing ? Set([GraphicsBackendKind.d3dMetal]) : []))
+        try #require(RayTracing.thisMacHasHardwareRayTracing && caps.status(of: .d3dMetal).isUsable)
+        let prefix = makeInitializedPrefix(in: dir)
+        var game = makeGame(in: dir)
+        game.graphics.backend = .d3dMetal
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: d3dMetal, options: LaunchOptions())
+            .environment["D3DM_SUPPORT_DXR"] == "1")
+        game.rayTracing = false
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: d3dMetal, options: LaunchOptions())
+            .environment["D3DM_SUPPORT_DXR"] == "0")
+        game.graphics.backend = .wined3dOpenGL
+        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: d3dMetal, options: LaunchOptions())
+            .environment["D3DM_SUPPORT_DXR"] == nil)
+        var old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(game)) as! [String: Any]
+        #expect(old["rayTracing"] as? Bool == false)
+        old.removeValue(forKey: "rayTracing")
+        #expect(try JSONDecoder().decode(Game.self, from: JSONSerialization.data(withJSONObject: old)).rayTracing)
+    }
+
     @Test func d3dMetalRequiresFramework() {
         let dir = TempDir()
         let caps = WineBackend().capabilities(of: makeFakeRuntime(in: dir, d3dMetal: true, kind: .gamePortingToolkit))

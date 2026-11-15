@@ -802,6 +802,12 @@ struct GameEditor: View {
                             Toggle("More memory for 32-bit games", isOn: $draft.largeAddressSpace)
                             Text(LargeAddressSpace.help).font(.caption).foregroundStyle(.secondary)
                         }
+                        if caps.rayTracing.contains(draft.graphics.backend) {
+                            Toggle("Hardware ray tracing (DirectX 12 games)", isOn: $draft.rayTracing)
+                            Text(RayTracing.help).font(.caption).foregroundStyle(.secondary)
+                        } else if RayTracing.thisMacHasHardwareRayTracing && draft.graphics.backend == .dxmt {
+                            Text(RayTracing.needsD3DMetal).font(.caption).foregroundStyle(.secondary)
+                        }
                         if caps.syncModes.count > 1 {
                             Picker("Synchronisation", selection: $draft.graphics.syncMode) {
                                 ForEach(caps.syncModes, id: \.self) { Text($0.displayName).tag($0) }
