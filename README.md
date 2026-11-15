@@ -1,9 +1,12 @@
-# Alloy
+# Alloy by Flake
 
-A free, open-source macOS app for playing Windows games on Macs (Apple silicon, and Intel with Compatibility graphics). It is built on Wine, DXMT (DirectX 10/11 on
+Alloy by Flake is a free, open-source macOS app for playing Windows games and running Windows apps on Macs (Apple silicon, and Intel with Compatibility graphics). It is built on Wine, DXMT (DirectX 10/11 on
 Apple Metal) and other open-source components, with optional support for Apple's D3DMetal for DirectX 12 games.
 
-Alloy is not affiliated with CodeWeavers, Apple, Microsoft or Valve, and contains no CrossOver or D3DMetal code.
+Alloy is not affiliated with CodeWeavers, Apple, Microsoft or Valve, and contains no CrossOver or D3DMetal code. It is not an Android
+emulator and is not related to other products named Alloy.
+
+New here? See [how to play Windows games on a Mac](https://flake.co.in/alloy/play-windows-games-on-mac/).
 
 **Download:** [flake.co.in/alloy](https://flake.co.in/alloy/) · **Game engine releases and their source:** [FlakeIdea/alloy-engine](https://github.com/FlakeIdea/alloy-engine/releases) · **Help:** support@flake.co.in
 
