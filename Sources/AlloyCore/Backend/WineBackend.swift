@@ -104,7 +104,7 @@ public struct WineBackend: CompatibilityBackend {
         let hasWebHelperFix = kernelbase.range(of: Data("steamwebhelper.exe".utf16.flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] })) != nil
         // The frame-latency option is read from DXMT's own d3d11 (about 4 MB), not assumed from the engine's version.
         let hasLatency = hasDXMT && ((try? Data(contentsOf: win.appendingPathComponent("d3d11.dll"), options: .alwaysMapped))?
-            .range(of: Data(LowInputDelay.configKey.utf8)) != nil)
+            .range(of: Data(FrameQueue.configKey.utf8)) != nil)
         // The scroll speed is read from the Mac driver's own code, not assumed from the engine's version.
         let winemac = (try? Data(contentsOf: wineLib.appendingPathComponent("x86_64-unix/winemac.so"), options: .alwaysMapped)) ?? Data()
         // bcrypt names libgnutls only when Wine was configured with it.
@@ -212,7 +212,7 @@ public struct WineBackend: CompatibilityBackend {
                                    supportsAVXAdvertisement: runtime.requiresRosetta, notes: notes,
                                    metalFXUpscaling: upscaling, metalFXFrameGeneration: frameGeneration,
                                    metalFXSpatialUpscaling: runtime.hasDXMT ? [.dxmt] : [],
-                                   lowInputDelay: runtime.hasDXMT && runtime.hasFrameLatencyOption ? [.dxmt] : [],
+                                   frameQueue: runtime.hasDXMT && runtime.hasFrameLatencyOption ? [.dxmt] : [],
                                    scrollSpeed: runtime.hasScrollSpeedOption,
                                    largeAddressSpace: runtime.hasLargeAddressOption)
         if runtime.hasD3DMetal && RayTracing.thisMacHasHardwareRayTracing { caps.rayTracing = [.d3dMetal] }
@@ -347,8 +347,8 @@ public struct WineBackend: CompatibilityBackend {
             env["DXMT_METALFX_SPATIAL_SWAPCHAIN"] = "1"
             dxmtConfig.append("d3d11.metalSpatialUpscaleFactor=\(MetalFXSpatialUpscaling.configValue(factor))")
         }
-        if g.lowInputDelay && caps.lowInputDelay.contains(g.backend) {
-            dxmtConfig.append("\(LowInputDelay.configKey)=\(LowInputDelay.frames)")
+        if let frames = g.frameQueue.frames, caps.frameQueue.contains(g.backend) {
+            dxmtConfig.append("\(FrameQueue.configKey)=\(frames)")
         }
         if !dxmtConfig.isEmpty { env["DXMT_CONFIG"] = dxmtConfig.joined(separator: ";") }
         if caps.scrollSpeed && game.scrollSpeedPercent != ScrollSpeed.standard && ScrollSpeed.range.contains(game.scrollSpeedPercent) {
@@ -477,12 +477,39 @@ public enum RayTracing {
     }()
 }
 
-/// Low input delay: the game may queue only one frame ahead of the GPU instead of three (DXMT's default), so what the
-/// player does reaches the screen up to two frames sooner. Measured with Alloy's frame-latency test on DXMT: GPU-heavy
-/// frames finished 55 ms after the game sent them instead of 113 ms, at the same frame rate.
-public enum LowInputDelay {
+/// How many frames a game may prepare ahead of the GPU (DXMT's `dxgi.maxFrameLatency`, patches/dxmt/0001; DXMT 0.80
+/// itself lets games queue three). Fewer frames: what the player does reaches the screen sooner. Measured with Alloy's
+/// D3D11 test on an M4 MacBook Pro, GPU-heavy frames at about 38.5 fps, from the start of a frame's CPU work to the end
+/// of its GPU work: 52.5 ms with one frame, 77.6 ms with two, 104.5 ms with the game's three. One frame costs frame
+/// rate when a game keeps both the CPU and the GPU busy: 48.5 fps against 49.4 with two (and with Highball), because the
+/// GPU runs the same frames about 1.3% slower with only one waiting. Two frames give the full frame rate.
+public enum FrameQueue: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// One frame: the lowest input delay, up to about 2% fewer frames.
+    case lowInputDelay
+    /// Two frames, the default: the full frame rate, a frame less delay than the game's own three.
+    case standard
+    /// Whatever the game asks for: three frames unless it calls SetMaximumFrameLatency.
+    case game
+
+    public var id: String { rawValue }
     public static let configKey = "dxgi.maxFrameLatency"
-    /// The fewest frames DXMT can queue: each frame waits for the previous one to finish on the GPU.
-    public static let frames = 1
-    public static let help = "Lets the game queue only one frame ahead of the graphics card instead of three, so your clicks and keys reach the screen up to two frames sooner. Best for competitive games. Turn it off if a game's frame rate drops or stutters with it."
+
+    /// The value for `configKey`, or nil to leave it to the game.
+    public var frames: Int? {
+        switch self {
+        case .lowInputDelay: return 1
+        case .standard: return 2
+        case .game: return nil
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .lowInputDelay: return "Low input delay (1 frame)"
+        case .standard: return "Standard (2 frames)"
+        case .game: return "Game's own (usually 3 frames)"
+        }
+    }
+
+    public static let help = "How many frames the game can prepare before they reach the screen. Standard gives the full frame rate. Low input delay gets your clicks and keys on screen about a frame sooner, for competitive games, but can cost up to 2% of frame rate in games that work both the processor and the graphics chip hard. Game's own adds about a frame of delay."
 }

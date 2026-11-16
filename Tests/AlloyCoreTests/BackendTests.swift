@@ -390,8 +390,9 @@ import Testing
         #expect(try JSONDecoder().decode(Game.self, from: JSONSerialization.data(withJSONObject: old)).largeAddressSpace)
     }
 
-    /// Low input delay is on by default, but only on a DXMT whose d3d11 reads dxgi.maxFrameLatency.
-    @Test func lowInputDelayNeedsTheEngineOption() throws {
+    /// Two frames by default, one for low input delay, none for the game's own; only on a DXMT whose d3d11 reads
+    /// dxgi.maxFrameLatency.
+    @Test func frameQueueNeedsTheEngineOption() throws {
         let dir = TempDir()
         var game = makeGame(in: dir)
         let prefix = makeInitializedPrefix(in: dir)
@@ -400,33 +401,40 @@ import Testing
         dir.write(lib + "x86_64-unix/winemetal.so", Data())
         let at120 = LaunchOptions(displayRefreshRate: 120)
         game.graphics.backend = .dxmt
-        #expect(game.graphics.lowInputDelay)
+        #expect(game.graphics.frameQueue == .standard)
 
         // An engine without the option (DXMT 0.80 as released) gets nothing.
         dir.write(lib + "x86_64-windows/d3d11.dll", Data("MZ....d3d11.metalSpatialUpscaleFactor....".utf8))
         var runtime = makeFakeRuntime(in: dir, moltenVK: true, d3dMetal: true)
-        #expect(!runtime.hasFrameLatencyOption && backend.capabilities(of: runtime).lowInputDelay.isEmpty)
+        #expect(!runtime.hasFrameLatencyOption && backend.capabilities(of: runtime).frameQueue.isEmpty)
         #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"]
                 == "d3d11.preferredMaxFrameRate=120")
 
         dir.write(lib + "x86_64-windows/d3d11.dll", Data("MZ....dxgi.maxFrameLatency....".utf8))
         runtime = makeFakeRuntime(in: dir, moltenVK: true, d3dMetal: true)
-        #expect(runtime.hasFrameLatencyOption && backend.capabilities(of: runtime).lowInputDelay == [.dxmt])
-        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"]
-                == "d3d11.preferredMaxFrameRate=120;dxgi.maxFrameLatency=1")
-        game.graphics.lowInputDelay = false
-        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"]
-                == "d3d11.preferredMaxFrameRate=120")
+        #expect(runtime.hasFrameLatencyOption && backend.capabilities(of: runtime).frameQueue == [.dxmt])
+        let config = { (g: Game) in try self.backend.launchCommand(for: g, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"] }
+        #expect(try config(game) == "d3d11.preferredMaxFrameRate=120;dxgi.maxFrameLatency=2")
+        game.graphics.frameQueue = .lowInputDelay
+        #expect(try config(game) == "d3d11.preferredMaxFrameRate=120;dxgi.maxFrameLatency=1")
+        game.graphics.frameQueue = .game
+        #expect(try config(game) == "d3d11.preferredMaxFrameRate=120")
         // Other graphics paths never get it.
-        game.graphics.lowInputDelay = true
+        game.graphics.frameQueue = .lowInputDelay
         game.graphics.backend = .d3dMetal
-        #expect(try backend.launchCommand(for: game, prefix: prefix, runtime: runtime, options: at120).environment["DXMT_CONFIG"] == nil)
+        #expect(try config(game) == nil)
 
-        // Games saved before the setting existed get it; turning it off is kept.
+        // Saved choices are kept. Settings from Alloy 1.0: on (the old default) becomes two frames, off the
+        // game's own; without either, two frames.
         let decode = { (json: String) in try JSONDecoder().decode(GraphicsConfiguration.self, from: Data(json.utf8)) }
-        #expect(try decode(#"{"backend":"dxmt"}"#).lowInputDelay)
-        var g = GraphicsConfiguration(); g.lowInputDelay = false
-        #expect(try !JSONDecoder().decode(GraphicsConfiguration.self, from: JSONEncoder().encode(g)).lowInputDelay)
+        #expect(try decode(#"{"backend":"dxmt"}"#).frameQueue == .standard)
+        #expect(try decode(#"{"backend":"dxmt","lowInputDelay":true}"#).frameQueue == .standard)
+        #expect(try decode(#"{"backend":"dxmt","lowInputDelay":false}"#).frameQueue == .game)
+        #expect(try decode(#"{"backend":"dxmt","frameQueue":"bogus"}"#).frameQueue == .standard)
+        for queue in FrameQueue.allCases {
+            var g = GraphicsConfiguration(); g.frameQueue = queue
+            #expect(try JSONDecoder().decode(GraphicsConfiguration.self, from: JSONEncoder().encode(g)).frameQueue == queue)
+        }
     }
 
     /// Settings saved before the cap existed keep their DXVK limit; the rest get the display maximum.

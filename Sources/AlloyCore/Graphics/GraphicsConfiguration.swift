@@ -154,8 +154,8 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
     public var dlss: Bool
     /// MetalFX spatial upscaling factor (DXMT), or nil for off.
     public var metalFXSpatialFactor: Double?
-    /// Queue one frame ahead of the GPU instead of three (DXMT, see `LowInputDelay`). On unless turned off.
-    public var lowInputDelay: Bool
+    /// How many frames the game may prepare ahead of the GPU (DXMT, see `FrameQueue`). Two unless changed.
+    public var frameQueue: FrameQueue
 
     public init(backend: GraphicsBackendKind = .wined3dOpenGL,
                 preset: QualityPreset = .balanced,
@@ -168,7 +168,7 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
                 forceDX11: Bool = false,
                 dlss: Bool = false,
                 metalFXSpatialFactor: Double? = nil,
-                lowInputDelay: Bool = true) {
+                frameQueue: FrameQueue = .standard) {
         self.backend = backend
         self.preset = preset
         self.targetFPS = targetFPS
@@ -180,7 +180,7 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
         self.forceDX11 = forceDX11
         self.dlss = dlss
         self.metalFXSpatialFactor = metalFXSpatialFactor
-        self.lowInputDelay = lowInputDelay
+        self.frameQueue = frameQueue
     }
 
     public init(from decoder: Decoder) throws {
@@ -206,10 +206,18 @@ public struct GraphicsConfiguration: Codable, Hashable, Sendable {
         dlss = try c.decodeIfPresent(Bool.self, forKey: .dlss) ?? false
         // 1.5× was offered until build 78; it reads as 2× now (see MetalFXSpatialUpscaling.factors).
         metalFXSpatialFactor = try c.decodeIfPresent(Double.self, forKey: .metalFXSpatialFactor).map(MetalFXSpatialUpscaling.wholePixels)
-        lowInputDelay = try c.decodeIfPresent(Bool.self, forKey: .lowInputDelay) ?? d.lowInputDelay
+        // Up to Alloy 1.0 this was "lowInputDelay", on (one frame) by default. On was nearly always the default rather
+        // than a choice, so it becomes the new default of two frames; turned off, the game kept its own choice.
+        if let queue = try? c.decodeIfPresent(FrameQueue.self, forKey: .frameQueue) {
+            frameQueue = queue
+        } else if let low = try legacy.decodeIfPresent(Bool.self, forKey: .lowInputDelay), !low {
+            frameQueue = .game
+        } else {
+            frameQueue = d.frameQueue
+        }
     }
 
-    private enum LegacyKeys: String, CodingKey { case dxvkFrameRateLimit }
+    private enum LegacyKeys: String, CodingKey { case dxvkFrameRateLimit, lowInputDelay }
 
     /// Frame-time budget for the target, e.g. 16.67 ms at 60 FPS.
     public var frameBudgetMilliseconds: Double { 1000.0 / Double(max(targetFPS, 1)) }
@@ -239,8 +247,8 @@ public struct BackendCapabilities: Equatable, Sendable {
     public var metalFXFrameGeneration: Set<GraphicsBackendKind> = []
     /// Graphics paths that can upscale any game's frames with MetalFX (DXMT's MetalFX swapchain).
     public var metalFXSpatialUpscaling: Set<GraphicsBackendKind> = []
-    /// Graphics paths that can limit the game to one queued frame (`LowInputDelay`).
-    public var lowInputDelay: Set<GraphicsBackendKind> = []
+    /// Graphics paths on which Alloy sets how many frames the game may queue (`FrameQueue`).
+    public var frameQueue: Set<GraphicsBackendKind> = []
     /// The engine takes a per-game scroll speed (`ScrollSpeed`).
     public var scrollSpeed = false
     /// 32-bit games can be given 4 GB of address space (`LargeAddressSpace`).

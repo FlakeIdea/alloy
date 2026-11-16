@@ -804,9 +804,11 @@ struct GameEditor: View {
                             }
                             Text(spatialNote).font(.caption).foregroundStyle(.secondary)
                         }
-                        if caps.lowInputDelay.contains(draft.graphics.backend) {
-                            Toggle("Low input delay", isOn: $draft.graphics.lowInputDelay)
-                            Text(LowInputDelay.help).font(.caption).foregroundStyle(.secondary)
+                        if caps.frameQueue.contains(draft.graphics.backend) {
+                            Picker("Frames prepared ahead", selection: $draft.graphics.frameQueue) {
+                                ForEach(FrameQueue.allCases) { Text($0.displayName).tag($0) }
+                            }
+                            Text(FrameQueue.help).font(.caption).foregroundStyle(.secondary)
                         }
                         if caps.supportsMetalHUD {
                             Toggle("Show metrics when the game starts", isOn: $draft.graphics.metalHUD)

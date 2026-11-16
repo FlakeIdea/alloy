@@ -62,7 +62,7 @@ the test Mac, so it was not rerun.
 
 | Alloy setting | Runs (avg FPS) | Mean | Min | Max |
 |---|---|---|---|---|
-| Low input delay on (default, 1 frame queued) | 37.6, 38.0 | **37.8** | 32.2 | 46.6 |
+| Low input delay on (then the default, 1 frame queued) | 37.6, 38.0 | **37.8** | 32.2 | 46.6 |
 | Low input delay off (3 frames queued) | 35.9 | 35.9 | 30.9 | 43.5 |
 
 The same as on 2026-10-31 (38.3) within run-to-run spread: this test is GPU-bound, and the engine changes since then
@@ -83,7 +83,37 @@ warm-up) alternated `dxgi.maxFrameLatency=1` and the default five times each on 
 Each pair is within about 1% and the winner alternates; both fall about 6% over four minutes of load and recover
 after a rest (`pmset -g therm` recorded no warning). The 35.9 Superposition run started straight after a full run;
 the 38.0 one followed a cool-down. Nothing changed in the engine. Future benchmark rounds should rest between runs
-and alternate the order.
+and alternate the order. The later test below found a cost of 1 frame that shows only while the Mac is cool.
+
+### Alloy vs Highball, and frames prepared ahead (2026-11-16)
+
+Highball 0.10.26 (`/Applications/Highball.app`), default engine `x64-sikarugir10.0_6-r28` (Wine 10.0, Highball's own
+DXMT build), run with the environment from its launch log (its renderer folders in `WINEDLLPATH_PREPEND`, MSync on,
+AVX not advertised, `WINEDEBUG=-all`) in a test bottle, against engine -8 (`qtest.exe`, 1600×1000 window, apps
+alternating in pairs):
+
+| Case | Alloy (fps) | Highball (fps) |
+|---|---|---|
+| GPU only, Alloy 1 frame | 38.59, 36.89, 36.43, 36.15 | 38.95, 38.89, 36.34, 36.17 |
+| 12 ms CPU + 21 ms GPU, Alloy 1 frame | 47.94, 43.88, 44.62, 44.55 | 48.70, 45.95, 45.21, 45.26 |
+| Same, Mac cool: Alloy 1 / 2 / game's own | 48.53 / 49.38 / 49.06 | 49.38 |
+| Same, Mac cool, two rounds: Alloy 1 / game's own | 48.50 / 49.27, 48.45 / 49.24 | 49.38, 49.35 |
+
+Highball doesn't limit the frame queue, so its games queue 3. Alloy's lag was the 1-frame queue alone: at 2 frames
+the two are equal. An instrumented DXMT d3d11 (Metal command buffer GPU start/end times, frame-latency wait,
+`nextDrawable` wait) showed why: with 1 frame the next command buffer is committed about 8.8 ms before the GPU needs
+it, the GPU is never idle between frames, and `nextDrawable` takes 0.03 ms; but the GPU takes 20.89 ms per frame
+against 20.63 ms with 2 frames waiting, about 1.3% longer for the same work. Nothing in DXMT waits needlessly; the GPU
+itself runs slower with a shallower queue. Delay (`qtestd.exe`, the same test timing a D3D11 event query from the
+start of each frame's CPU work), GPU-heavy frames at about 38.5 fps: 52.5 ms with 1 frame, 77.6 ms with 2, 104.5 ms
+with 3.
+
+So from Alloy 1.0.1 each game has a choice (`FrameQueue`): Standard, 2 frames (the default), Low input delay, 1 frame,
+or the game's own. Games saved with the old setting on (the old default) get Standard, with it off the game's own.
+
+Superposition, one complete run each, different hours: Alloy 37.8 (1 frame), Highball 37.8. A full series couldn't be
+run: Superposition stops when its window isn't active, and on macOS 14 and later a program started from a shell or a
+helper app (`open`, `NSRunningApplication.activate`) can't take focus from the app in front.
 
 ### Expectations, not results
 
@@ -458,12 +488,12 @@ read yet into one with the total (360 for three steps), and raw input keeps them
 
 Brawlhalla itself hasn't been tested. DXMT 0.80 lets a game queue up to three frames ahead of the GPU
 (`max_latency_ = 3`), which is most of the delay between a click and the screen. Engine package -4 adds a
-`dxgi.maxFrameLatency` option to DXMT (`patches/dxmt`), and each game's "Low input delay" setting (on by default)
-sets it to 1, the fewest DXMT can queue. Games can't raise it again with `SetMaximumFrameLatency`.
+`dxgi.maxFrameLatency` option to DXMT (`patches/dxmt`). Each game's "Frames prepared ahead" setting sets it: 2 by
+default since Alloy 1.0.1, 1 for Low input delay (the fewest DXMT can queue), or not at all for the game's own. Games can't raise it again with `SetMaximumFrameLatency`.
 
 Measured with a D3D11 test in Alloy on that engine, at 120 Hz with the display frame cap, timing when each frame's
 GPU work finished after the game sent it: 33.0 → 16.6 ms at 120 fps, and 103.7 → 51.8 ms for GPU-heavy frames at
-38.6 fps, with the same frame rate either way. Turn the setting off for a game whose frame rate drops with it.
+38.6 fps, with the same frame rate in that test. A later test (above, Alloy vs Highball) found 1 frame can cost up to about 2%.
 Older engines don't have the option, so the setting isn't shown for them.
 
 ## Steam's window frame rate
