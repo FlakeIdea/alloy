@@ -1,0 +1,41 @@
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+index 5e9404d..cada0de 100644
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -34,6 +34,27 @@ constexpr size_t kSwapchainLatency = 1;
+ 
+ namespace dxmt {
+ 
++/**
++With Wine's mode emulation on (EmulateModeset under HKCU\Software\Wine\X11 Driver, read by win32u on every
++platform), a display mode change only changes the screen size Wine reports to the program; the real display keeps
++its mode and the picture is scaled to fill it. On Windows, a swap chain without ALLOW_MODE_SWITCH that goes
++fullscreen at a size other than the desktop's is scaled to fill the screen too. Asking Wine for the swap chain's
++size gives the same result, where keeping the desktop mode leaves the picture in a corner of the screen.
++*/
++static bool
++WineEmulatesModeset() {
++  static const bool on = [] {
++    char value[16] = {};
++    DWORD size = sizeof(value);
++    if (RegGetValueA(HKEY_CURRENT_USER, "Software\\Wine\\X11 Driver", "EmulateModeset", RRF_RT_REG_SZ, nullptr,
++                     value, &size) != ERROR_SUCCESS)
++      return false;
++    char c = value[0];
++    return c == 'y' || c == 'Y' || c == 't' || c == 'T' || c == '1';
++  }();
++  return on;
++}
++
+ WMTPixelFormat ConvertSwapChainFormat(DXGI_FORMAT format) {
+   switch (format) {
+   case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+@@ -378,7 +399,7 @@ public:
+     DXGI_MODE_DESC1 preferred_mode = *pDisplayMode;
+     DXGI_MODE_DESC1 selected_mode = {};
+ 
+-    if (!(desc_.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH)) {
++    if (!(desc_.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) && !WineEmulatesModeset()) {
+       preferred_mode.Width = 0;
+       preferred_mode.Height = 0;
+     }

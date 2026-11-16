@@ -405,6 +405,13 @@ do {
         let shaders = shaderCacheID != nil && graphics.backend == .dxmt ? ShaderCache.prepare(for: game, supportDirectory: support) : nil
         let cmd = try backend.launchCommand(for: game, prefix: p, runtime: r,
                                             options: LaunchOptions(loadMetricsHUD: metricsHidden, shaderCacheDirectory: shaders))
+        // As the app does: after a move to another engine, Wine's refresh runs first with Alloy's overrides.
+        // Started by the game instead, it stops at Wine Mono's download prompt.
+        if !p.isReadOnly && p.needsWineUpdate(for: r) {
+            let update = LaunchSession(command: try backend.updatePrefixCommand(prefix: p, runtime: r), logFile: nil)
+            try update.start()
+            print("[alloy] Wine refreshed \(p.name) for \(r.displayName): \(update.waitUntilExit(timeout: 180).summary)")
+        }
         if graphics.dlss {
             guard backend.capabilities(of: r).metalFXUpscaling.contains(graphics.backend) else {
                 fail("DLSS → MetalFX is not available for \(graphics.backend.displayName) in \(r.displayName).")

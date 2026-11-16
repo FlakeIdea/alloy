@@ -9,6 +9,14 @@ Alloy's game engine uses DXMT v0.80 (https://github.com/3Shain/dxmt, MIT licence
   "Low input delay" setting is on. 0 or unset leaves DXMT's behaviour unchanged.
 - `0002-include-iomanip-for-gcc-16.patch`: a missing standard header that GCC 16 (mingw-w64) needs. No change in
   behaviour.
+- `0003-fullscreen-size-with-wine-mode-emulation.patch`: when Wine's mode emulation is on (`EmulateModeset` under
+  `HKCU\Software\Wine\X11 Driver`, which Alloy turns on in every game environment), fullscreen asks Wine for the
+  swap chain's size even if the game didn't set `DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH`. DXMT otherwise keeps the
+  desktop mode for such games, so a game going fullscreen at 1024×665 on an 1800×1169 desktop drew into a 1024×665
+  window in the top-left corner, and after a minimize and restore Wine stretched that window to 1800×1169 while the
+  game still drew at 1024×665 (BeamNG.drive: wrong UI and camera scaling). With emulation the real display never
+  changes mode: Wine reports the requested size to the game and scales the picture to fill the screen, which is what
+  Windows does for these games. With emulation off, nothing changes.
 
 ## Building d3d11.dll
 
