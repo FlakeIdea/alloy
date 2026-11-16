@@ -70,6 +70,21 @@ The same as on 2026-10-31 (38.3) within run-to-run spread: this test is GPU-boun
 ended within about 20 s of starting with Superposition's "Benchmark stopped" (it stops on input or focus change) and
 are excluded; the cause was not found. Published on flake.co.in/alloy/benchmarks/.
 
+**Why the 3-frame run scored lower: heat, not the setting.** A D3D11 test program (`qtest.exe`: a pixel shader with
+about 26 ms of GPU work per frame, optionally 12 ms of busy CPU work per frame, no vsync, 8 s per run after a 2 s
+warm-up) alternated `dxgi.maxFrameLatency=1` and the default five times each on engine -7:
+
+| Case | 1 frame (fps) | Default, 3 frames (fps) |
+|---|---|---|
+| GPU only | 38.55, 38.53, 38.12, 37.14, 36.23 (mean 37.71) | 38.86, 38.66, 37.36, 36.70, 36.12 (mean 37.54) |
+| 12 ms CPU + 21 ms GPU | 47.86, 47.92, 46.08, 45.11, 44.66 (mean 46.33) | 48.49, 47.38, 45.62, 45.23, 45.20 (mean 46.38) |
+| GPU only, after 3 min idle | 38.51 | 38.75 |
+
+Each pair is within about 1% and the winner alternates; both fall about 6% over four minutes of load and recover
+after a rest (`pmset -g therm` recorded no warning). The 35.9 Superposition run started straight after a full run;
+the 38.0 one followed a cool-down. Nothing changed in the engine. Future benchmark rounds should rest between runs
+and alternate the order.
+
 ### Expectations, not results
 
 * Both games are Unreal Engine titles that default to DX12, with a `-dx11` fallback.
